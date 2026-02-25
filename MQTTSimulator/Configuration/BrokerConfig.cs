@@ -39,7 +39,6 @@ public class BrokerConfig
     public int EffectivePort => Port > 0 ? Port : Type switch
     {
         BrokerType.IoTHub or BrokerType.MqttTls or BrokerType.MqttMtls => 8883,
-        BrokerType.EventHub => 5671,
         _ => 1883
     };
 }

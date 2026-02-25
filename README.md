@@ -136,7 +136,7 @@ broker:
 
 ### Event Hubs (`EventHub`)
 
-Sends telemetry to Azure Event Hubs using the `Azure.Messaging.EventHubs` SDK. Each device's ID is used as the partition key.
+Sends telemetry to Azure Event Hubs using the Event Hubs REST API with SAS token authentication. Each device's ID is used as the partition key. No SDK dependency required.
 
 ```yaml
 broker:
@@ -201,7 +201,7 @@ To keep configuration minimal, several fields are inferred automatically:
 | Feature | Rule |
 |---------|------|
 | **Auth** | `connection` present → SAS; `cert` present → X.509 |
-| **Port** | IoTHub/MqttTls/MqttMtls → 8883; EventHub → 5671; Mqtt → 1883 |
+| **Port** | IoTHub/MqttTls/MqttMtls → 8883; Mqtt → 1883 (EventHub uses HTTPS :443) |
 | **Interval** | Inherits `defaultInterval` unless device/fleet overrides |
 | **Enabled** | Defaults to `true` |
 

@@ -1,5 +1,6 @@
-using Azure.Messaging.EventHubs;
-using Azure.Messaging.EventHubs.Producer;
+using System.Security.Cryptography;
+using System.Text;
+using System.Web;
 using Microsoft.Extensions.Logging;
 using MQTTSimulator.Configuration;
 
@@ -10,7 +11,11 @@ public class EventHubBrokerClient : IBrokerClient
     private readonly string _deviceId;
     private readonly BrokerConfig _brokerConfig;
     private readonly ILogger _logger;
-    private EventHubProducerClient? _producer;
+    private readonly HttpClient _httpClient = new();
+    private string _namespace = string.Empty;
+    private string _hubName = string.Empty;
+    private string _keyName = string.Empty;
+    private string _key = string.Empty;
 
     public EventHubBrokerClient(DeviceConfig deviceConfig, ILogger logger)
     {
@@ -21,45 +26,79 @@ public class EventHubBrokerClient : IBrokerClient
 
     public Task ConnectAsync(CancellationToken cancellationToken = default)
     {
-        _producer = string.IsNullOrEmpty(_brokerConfig.Hub)
-            ? new EventHubProducerClient(_brokerConfig.Connection)
-            : new EventHubProducerClient(_brokerConfig.Connection, _brokerConfig.Hub);
+        ParseConnectionString(_brokerConfig.Connection);
 
-        _logger.LogInformation("Device {DeviceId} connected to EventHub", _deviceId);
+        if (!string.IsNullOrEmpty(_brokerConfig.Hub))
+            _hubName = _brokerConfig.Hub;
+
+        _logger.LogInformation("Device {DeviceId} connected to EventHub {HubName} on {Namespace}",
+            _deviceId, _hubName, _namespace);
         return Task.CompletedTask;
     }
 
     public async Task SendAsync(string payload, CancellationToken cancellationToken = default)
     {
-        if (_producer is null)
-            throw new InvalidOperationException("Not connected. Call ConnectAsync first.");
+        var uri = $"https://{_namespace}.servicebus.windows.net/{_hubName}/messages";
+        var sasToken = GenerateSasToken($"{_namespace}.servicebus.windows.net/{_hubName}");
 
-        var batchOptions = new CreateBatchOptions { PartitionKey = _deviceId };
-        using var batch = await _producer.CreateBatchAsync(batchOptions, cancellationToken);
+        using var request = new HttpRequestMessage(HttpMethod.Post, uri);
+        request.Headers.Add("Authorization", sasToken);
+        request.Headers.Add("BrokerProperties", $"{{\"PartitionKey\":\"{_deviceId}\"}}");
+        request.Content = new StringContent(payload, Encoding.UTF8, "application/json");
 
-        var eventData = new EventData(payload);
-        if (!batch.TryAdd(eventData))
-            throw new InvalidOperationException($"Payload too large for EventHub batch ({payload.Length} bytes)");
+        var response = await _httpClient.SendAsync(request, cancellationToken);
+        response.EnsureSuccessStatusCode();
 
-        await _producer.SendAsync(batch, cancellationToken);
-        _logger.LogDebug("Device {DeviceId} sent {Bytes} bytes to EventHub", _deviceId, payload.Length);
+        _logger.LogDebug("Device {DeviceId} sent {Bytes} bytes to EventHub {HubName}",
+            _deviceId, payload.Length, _hubName);
     }
 
-    public async Task DisconnectAsync(CancellationToken cancellationToken = default)
+    public Task DisconnectAsync(CancellationToken cancellationToken = default)
     {
-        if (_producer is not null)
+        _logger.LogInformation("Device {DeviceId} disconnected from EventHub", _deviceId);
+        return Task.CompletedTask;
+    }
+
+    public ValueTask DisposeAsync()
+    {
+        _httpClient.Dispose();
+        return ValueTask.CompletedTask;
+    }
+
+    private void ParseConnectionString(string connectionString)
+    {
+        foreach (var part in connectionString.Split(';'))
         {
-            await _producer.CloseAsync(cancellationToken);
-            _logger.LogInformation("Device {DeviceId} disconnected from EventHub", _deviceId);
+            var idx = part.IndexOf('=');
+            if (idx < 0) continue;
+            var key = part[..idx].Trim();
+            var value = part[(idx + 1)..].Trim();
+            switch (key)
+            {
+                case "Endpoint":
+                    _namespace = new Uri(value).Host.Split('.')[0];
+                    break;
+                case "SharedAccessKeyName":
+                    _keyName = value;
+                    break;
+                case "SharedAccessKey":
+                    _key = value;
+                    break;
+                case "EntityPath":
+                    _hubName = value;
+                    break;
+            }
         }
     }
 
-    public async ValueTask DisposeAsync()
+    private string GenerateSasToken(string resourceUri)
     {
-        if (_producer is not null)
-        {
-            await _producer.DisposeAsync();
-            _producer = null;
-        }
+        var encodedUri = HttpUtility.UrlEncode(resourceUri);
+        var expiry = DateTimeOffset.UtcNow.Add(TimeSpan.FromHours(1)).ToUnixTimeSeconds();
+        var stringToSign = $"{encodedUri}\n{expiry}";
+
+        using var hmac = new HMACSHA256(Convert.FromBase64String(_key));
+        var signature = Convert.ToBase64String(hmac.ComputeHash(Encoding.UTF8.GetBytes(stringToSign)));
+        return $"SharedAccessSignature sr={encodedUri}&sig={HttpUtility.UrlEncode(signature)}&se={expiry}&skn={_keyName}";
     }
 }

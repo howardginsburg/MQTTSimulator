@@ -41,7 +41,7 @@ graph TB
 
     subgraph Brokers["Broker Clients (IBrokerClient)"]
         BrokerClientFactory --> IoTHubClient["IoTHubBrokerClient<br/>MQTT 3.1.1 via MQTTnet<br/>SAS token / X.509"]
-        BrokerClientFactory --> EventHubClient["EventHubBrokerClient<br/>Azure.Messaging.EventHubs<br/>partition key = device ID"]
+        BrokerClientFactory --> EventHubClient["EventHubBrokerClient<br/>HTTPS REST API + SAS token<br/>partition key = device ID"]
         BrokerClientFactory --> MqttMtlsClient["MqttMtlsBrokerClient<br/>MQTT + mutual TLS<br/>client cert + CA"]
         BrokerClientFactory --> MqttClient["MqttBrokerClient<br/>MQTT / MQTT+TLS<br/>user/pass or CA cert"]
     end
@@ -64,13 +64,13 @@ graph TB
 
     subgraph Targets["External Services"]
         IoTHub["Azure IoT Hub<br/>MQTT 3.1.1 :8883"]
-        EventHub["Azure Event Hubs<br/>AMQP :5671"]
+        EventHub["Azure Event Hubs<br/>HTTPS :443"]
         EventGrid["Azure Event Grid<br/>MQTT + mTLS :8883"]
         MqttBroker["MQTT Broker<br/>Mosquitto, EMQX, etc.<br/>:1883 / :8883"]
     end
 
     IoTHubClient -->|MQTT| IoTHub
-    EventHubClient -->|AMQP| EventHub
+    EventHubClient -->|HTTPS REST| EventHub
     MqttMtlsClient -->|MQTT+mTLS| EventGrid
     MqttClient -->|MQTT| MqttBroker
 
@@ -179,7 +179,7 @@ MQTTSimulator/
 │   ├── IBrokerClient.cs                # Interface: Connect, Send, Disconnect
 │   ├── BrokerClientFactory.cs          # Creates broker client from BrokerType
 │   ├── IoTHubBrokerClient.cs           # Azure IoT Hub via MQTT (SAS / X.509)
-│   ├── EventHubBrokerClient.cs         # Azure Event Hubs via AMQP SDK
+│   ├── EventHubBrokerClient.cs         # Azure Event Hubs via HTTPS REST API
 │   ├── MqttMtlsBrokerClient.cs         # MQTT + mutual TLS (Event Grid, etc.)
 │   ├── MqttBrokerClient.cs             # Plain MQTT / MQTT+TLS (Mosquitto, etc.)
 │   ├── IoTHubDeviceManager.cs          # REST API fleet provisioning for IoT Hub
@@ -206,7 +206,7 @@ MQTTSimulator/
 | Decision | Rationale |
 |----------|-----------|
 | **Pure MQTT via MQTTnet** | No dependency on Azure Device SDK — same library for IoT Hub, Event Grid, and generic MQTT brokers |
-| **Event Hubs via AMQP SDK** | Event Hubs doesn't expose an MQTT endpoint; the `Azure.Messaging.EventHubs` SDK is the standard client |
+| **Event Hubs via HTTPS REST** | Event Hubs doesn't expose an MQTT endpoint; the REST API allows sending events without any SDK dependency |
 | **YAML configuration** | More readable than JSON for deeply nested device configs; compact inline syntax for field generators |
 | **Smart defaults** | Auth inferred from fields present, ports default by broker type, intervals inherit from `defaultInterval` — keeps YAML minimal |
 | **Startup validation** | All errors surfaced at once before any connections, so users fix config issues in one pass |
@@ -222,7 +222,6 @@ MQTTSimulator/
 |---------|---------|---------|
 | `Microsoft.Extensions.Hosting` | 10.0.3 | Generic Host, DI, configuration binding |
 | `MQTTnet` | 4.3.7.1207 | MQTT client for IoT Hub, Event Grid, generic brokers |
-| `Azure.Messaging.EventHubs` | 5.12.2 | Event Hub producer client |
 | `NetEscapades.Configuration.Yaml` | 3.1.0 | YAML configuration provider |
 | `Serilog.Extensions.Hosting` | 10.0.0 | Structured file logging |
 | `Serilog.Sinks.File` | 7.0.0 | Log file output |
