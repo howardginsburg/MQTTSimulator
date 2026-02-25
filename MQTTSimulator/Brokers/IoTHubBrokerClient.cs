@@ -28,17 +28,17 @@ public class IoTHubBrokerClient : IBrokerClient
         _logger = logger;
         _client = new MqttFactory().CreateMqttClient();
 
-        if (_brokerConfig.AuthMethod == AuthMethod.SAS)
+        if (_brokerConfig.Auth == AuthMethod.SAS)
         {
-            var parts = ParseConnectionString(_brokerConfig.ConnectionString);
+            var parts = ParseConnectionString(_brokerConfig.Connection);
             _hostname = parts.hostname;
             _deviceId = parts.deviceId;
             _deviceKey = parts.sharedAccessKey;
         }
         else
         {
-            _hostname = _brokerConfig.Hostname;
-            _deviceId = deviceConfig.DeviceId;
+            _hostname = _brokerConfig.Host;
+            _deviceId = deviceConfig.Id;
             _deviceKey = string.Empty;
         }
 
@@ -77,13 +77,12 @@ public class IoTHubBrokerClient : IBrokerClient
             .UseTls(true)
             .Build();
 
-        if (_brokerConfig.AuthMethod == AuthMethod.X509 &&
-            !string.IsNullOrEmpty(_brokerConfig.CertificatePath))
+        if (_brokerConfig.Auth == AuthMethod.X509 &&
+            !string.IsNullOrEmpty(_brokerConfig.Cert))
         {
-            using var ephemeralCert = X509Certificate2.CreateFromPemFile(
-                _brokerConfig.CertificatePath,
-                _brokerConfig.KeyPath);
-            var clientCert = new X509Certificate2(ephemeralCert.Export(X509ContentType.Pfx));
+            var clientCert = CertificateHelper.LoadClientCertFromPem(
+                _brokerConfig.Cert,
+                _brokerConfig.Key);
 
             tlsOptions = new MqttClientTlsOptionsBuilder()
                 .UseTls(true)
@@ -129,7 +128,7 @@ public class IoTHubBrokerClient : IBrokerClient
 
     private string GetPassword()
     {
-        if (_brokerConfig.AuthMethod == AuthMethod.X509)
+        if (_brokerConfig.Auth == AuthMethod.X509)
             return string.Empty;
 
         return SasTokenGenerator.Generate(

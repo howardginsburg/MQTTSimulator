@@ -41,28 +41,28 @@ public class IoTHubDeviceManager
         _sharedAccessKey = key;
     }
 
-    public async Task<List<DeviceConfig>> ProvisionDevicesAsync(IoTHubFleetConfig fleetConfig, CancellationToken cancellationToken)
+    public async Task<List<DeviceConfig>> ProvisionDevicesAsync(FleetConfig fleetConfig, CancellationToken cancellationToken)
     {
         var devices = new List<DeviceConfig>();
 
-        for (int i = 1; i <= fleetConfig.DeviceCount; i++)
+        for (int i = 1; i <= fleetConfig.Count; i++)
         {
-            var deviceId = $"{fleetConfig.DevicePrefix}-{i:D3}";
+            var deviceId = $"{fleetConfig.Prefix}-{i:D3}";
             var deviceKey = await EnsureDeviceAsync(deviceId, cancellationToken);
 
             var deviceConnectionString = $"HostName={_hostname};DeviceId={deviceId};SharedAccessKey={deviceKey}";
 
             devices.Add(new DeviceConfig
             {
-                DeviceId = deviceId,
+                Id = deviceId,
                 Enabled = true,
-                SendIntervalMs = fleetConfig.SendIntervalMs,
-                TelemetryProfileName = fleetConfig.TelemetryProfileName,
+                Interval = fleetConfig.Interval,
+                EffectiveInterval = fleetConfig.EffectiveInterval,
+                Profile = fleetConfig.Profile,
                 Broker = new BrokerConfig
                 {
                     Type = BrokerType.IoTHub,
-                    AuthMethod = AuthMethod.SAS,
-                    ConnectionString = deviceConnectionString
+                    Connection = deviceConnectionString
                 }
             });
 

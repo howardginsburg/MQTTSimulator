@@ -10,9 +10,9 @@ public class RandomRangeGenerator : IFieldGenerator
 
     public string FieldName { get; }
 
-    public RandomRangeGenerator(FieldConfig config)
+    public RandomRangeGenerator(string fieldName, FieldConfig config)
     {
-        FieldName = config.Name;
+        FieldName = fieldName;
         _min = config.Min;
         _max = config.Max;
     }

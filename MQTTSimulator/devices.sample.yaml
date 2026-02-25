@@ -1,0 +1,143 @@
+# ==============================================================================
+# MQTT Device Simulator — Configuration Reference
+# ==============================================================================
+# Copy this file to devices.yaml and customize for your environment.
+#
+# Interval format:  "5s" (seconds) | "500ms" (milliseconds) | "1m" (minutes)
+# Generator types:  Increment | Random | Sine | Static | Cycle | Timestamp | HashSelect
+# Broker types:     IoTHub | Mqtt | MqttTls | MqttMtls | EventHub
+# Auth is auto-detected: connection string → SAS, cert/key → X509
+# Ports default: IoTHub/MqttTls/MqttMtls → 8883, EventHub → 5671, Mqtt → 1883
+# ==============================================================================
+
+simulator:
+  # Stagger delay (ms) between device connections to avoid thundering herd
+  connectionDelayMs: 100
+
+  # Default send interval — devices/fleets inherit unless they override
+  defaultInterval: 5s
+
+  # --------------------------------------------------------------------------
+  # Telemetry Profiles
+  # --------------------------------------------------------------------------
+  # Reusable payload schemas referenced by devices. Each field name is a key
+  # with its generator configuration inline.
+  #
+  # Generator-specific parameters:
+  #   Increment  init, step, min, max — bounces between min and max
+  #   Random     min, max — uniform random in range
+  #   Sine       amplitude, offset, period (seconds) — sine wave over time
+  #   Static     value (string) or init (numeric) — constant value
+  #   Cycle      values (list) — cycles through items in order
+  #   Timestamp  (no params) — UTC ISO 8601 timestamp
+  #   HashSelect values (list) — deterministic pick based on device ID hash
+  # --------------------------------------------------------------------------
+  profiles:
+    environmental:
+      temperature: { gen: Increment, init: 20, step: 1, min: 15, max: 30 }
+      humidity:    { gen: Random, min: 40, max: 80 }
+      pressure:    { gen: Sine, amplitude: 10, offset: 1013.25, period: 60 }
+      status:      { gen: Cycle, values: [ON, STANDBY, OFF] }
+      timestamp:   { gen: Timestamp }
+      location:    { gen: HashSelect, values: [Building-A, Building-B, Building-C] }
+
+    power:
+      voltage:   { gen: Random, min: 220, max: 240 }
+      current:   { gen: Sine, amplitude: 2, offset: 10, period: 30 }
+      status:    { gen: Cycle, values: [ON, STANDBY, OFF] }
+      timestamp: { gen: Timestamp }
+
+  # --------------------------------------------------------------------------
+  # Devices
+  # --------------------------------------------------------------------------
+  # Each device connects to a broker and sends telemetry from a profile.
+  # Only set interval if overriding the defaultInterval above.
+  # Auth is inferred: connection → SAS, cert → X509. No auth field needed.
+  # Port defaults by broker type; only set if non-standard.
+  #
+  # Device properties:
+  #   id         Unique device identifier
+  #   enabled    true/false — skip disabled devices (default: true)
+  #   interval   Override send interval (optional, inherits defaultInterval)
+  #   profile    Name of a telemetry profile defined above
+  #   broker     Connection settings (see broker examples below)
+  # --------------------------------------------------------------------------
+  devices:
+
+    # --- Azure IoT Hub with SAS token (auth inferred from connection) ---
+    - id: sensor-001
+      profile: environmental
+      broker:
+        type: IoTHub
+        # Device connection string from Azure Portal → IoT Hub → Devices
+        connection: "HostName=myhub.azure-devices.net;DeviceId=sensor-001;SharedAccessKey=your-base64-key"
+
+    # --- Azure IoT Hub with X.509 certificate (auth inferred from cert) ---
+    - id: sensor-002
+      profile: environmental
+      broker:
+        type: IoTHub
+        host: myhub.azure-devices.net
+        cert: certs/sensor-002.pem          # Client certificate (PEM)
+        key: certs/sensor-002-key.pem        # Private key (PEM)
+
+    # --- Azure Event Grid MQTT broker with mTLS ---
+    - id: gateway-001
+      interval: 10s                          # Override default interval
+      profile: power
+      broker:
+        type: MqttMtls
+        host: myns.westus2-1.ts.eventgrid.azure.net
+        topic: devices/gateway-001/telemetry
+        cert: certs/gateway-001.pem          # Client certificate (PEM)
+        key: certs/gateway-001-key.pem       # Private key (PEM)
+        ca: certs/eventgrid-ca.pem           # CA root certificate (PEM)
+
+    # --- Azure Event Hub (single device, SAS connection string) ---
+    - id: eh-device-001
+      profile: environmental
+      broker:
+        type: EventHub
+        # EventHub connection string (with or without EntityPath)
+        connection: "Endpoint=sb://mynamespace.servicebus.windows.net/;SharedAccessKeyName=send;SharedAccessKey=your-key"
+        hub: my-event-hub                    # EventHub name (omit if EntityPath is in connection string)
+
+    # --- Plain MQTT broker (Mosquitto, EMQX, etc.) ---
+    - id: local-device-001
+      enabled: false
+      interval: 3s
+      profile: environmental
+      broker:
+        type: Mqtt                           # Use MqttTls for TLS
+        host: localhost
+        port: 1883                           # Default for Mqtt, shown for clarity
+        user: device1
+        pass: your-password-here
+        topic: devices/local-device-001/telemetry
+
+  # --------------------------------------------------------------------------
+  # Fleet Auto-Provisioning
+  # --------------------------------------------------------------------------
+  # Spawn multiple simulated devices from a single connection string.
+  # Devices are named {prefix}-{NNN} (e.g. sim-001).
+  # Interval is inherited from defaultInterval unless overridden.
+  #
+  # Fleet types:
+  #   IoTHub    Creates/reuses devices in IoT Hub via owner key
+  #   EventHub  Shares one EventHub connection; device ID = partition key
+  # --------------------------------------------------------------------------
+  fleets:
+    # --- IoT Hub fleet (devices auto-provisioned server-side) ---
+    - type: IoTHub
+      connection: "HostName=myhub.azure-devices.net;SharedAccessKeyName=iothubowner;SharedAccessKey=your-owner-key"
+      prefix: sim
+      count: 5
+      profile: environmental
+
+    # --- EventHub fleet (no server-side provisioning needed) ---
+    - type: EventHub
+      connection: "Endpoint=sb://mynamespace.servicebus.windows.net/;SharedAccessKeyName=send;SharedAccessKey=your-key"
+      hub: my-event-hub
+      prefix: eh
+      count: 10
+      profile: environmental

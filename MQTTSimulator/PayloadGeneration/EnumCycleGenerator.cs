@@ -9,9 +9,9 @@ public class EnumCycleGenerator : IFieldGenerator
 
     public string FieldName { get; }
 
-    public EnumCycleGenerator(FieldConfig config)
+    public EnumCycleGenerator(string fieldName, FieldConfig config)
     {
-        FieldName = config.Name;
+        FieldName = fieldName;
         _values = config.Values;
         _index = 0;
     }

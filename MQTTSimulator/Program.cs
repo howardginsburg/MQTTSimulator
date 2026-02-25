@@ -14,7 +14,7 @@ Log.Logger = new LoggerConfiguration()
     .CreateLogger();
 
 var builder = Host.CreateApplicationBuilder(args);
-builder.Configuration.AddJsonFile("devices.json", optional: false, reloadOnChange: true);
+builder.Configuration.AddYamlFile("devices.yaml", optional: false, reloadOnChange: true);
 
 // Remove default console logging — Spectre.Console owns the terminal
 builder.Logging.ClearProviders();

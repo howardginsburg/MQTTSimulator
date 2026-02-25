@@ -3,7 +3,8 @@ namespace MQTTSimulator.Configuration;
 public class SimulatorConfig
 {
     public int ConnectionDelayMs { get; set; } = 0;
-    public Dictionary<string, List<FieldConfig>> TelemetryProfiles { get; set; } = new();
+    public string DefaultInterval { get; set; } = "5s";
+    public Dictionary<string, Dictionary<string, FieldConfig>> Profiles { get; set; } = new();
     public List<DeviceConfig> Devices { get; set; } = new();
-    public List<IoTHubFleetConfig> IoTHubFleets { get; set; } = new();
+    public List<FleetConfig> Fleets { get; set; } = new();
 }

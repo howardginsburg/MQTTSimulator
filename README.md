@@ -1,21 +1,24 @@
 # MQTTSimulator
 
-A .NET 8 console application that simulates multiple MQTT devices sending configurable telemetry to various MQTT brokers. Supports Azure IoT Hub, Azure Event Grid (via mTLS), and standard MQTT brokers with optional TLS.
+A .NET 8 console application that simulates multiple IoT devices sending configurable telemetry to various brokers. Supports Azure IoT Hub, Azure Event Grid (via mTLS), Azure Event Hubs, and standard MQTT brokers with optional TLS.
 
 ## Features
 
-- **Multiple broker types**: IoT Hub (SAS/X.509), MQTT with mutual TLS, MQTT with username/password, MQTT over TLS
-- **Pure MQTT**: Uses MQTTnet directly — no Azure Device SDK dependencies
-- **Configurable telemetry**: Define reusable telemetry profiles with multiple field generator types
-- **Field generators**: Increment (bouncing), Random Range, Sine Wave, Static, Enum Cycle, Timestamp
+- **Multiple broker types**: IoT Hub (SAS / X.509), MQTT with mutual TLS, MQTT with username/password, MQTT over TLS, Azure Event Hubs
+- **Pure MQTT**: Uses MQTTnet directly for MQTT brokers — no Azure Device SDK dependencies
+- **Fleet provisioning**: Auto-provision batches of IoT Hub or Event Hub devices from a single connection string
+- **YAML configuration**: Clean, compact YAML config with smart defaults — auth, ports, and intervals are inferred automatically
+- **Configurable telemetry**: Define reusable telemetry profiles with 7 field generator types
+- **Startup validation**: Configuration is validated at startup with clear error messages before any connections are made
 - **Connection stagger**: Configurable delay between device connections to avoid thundering-herd TLS handshakes
+- **Live dashboard**: Real-time Spectre.Console UI showing device status and message counts
+- **Structured logging**: Serilog file logging with per-device context
 - **Graceful shutdown**: Ctrl+C cleanly disconnects all devices
-- **Docker ready**: Multi-stage Dockerfile included
 
 ## Prerequisites
 
 - [.NET 8 SDK](https://dotnet.microsoft.com/download/dotnet/8.0)
-- An MQTT broker to connect to (IoT Hub, Event Grid, Mosquitto, etc.)
+- A broker to connect to (IoT Hub, Event Grid, Event Hubs, Mosquitto, etc.)
 
 ## Getting Started
 
@@ -32,67 +35,10 @@ dotnet build MQTTSimulator
 Copy the sample configuration file and fill in your credentials:
 
 ```bash
-cp MQTTSimulator/appsettings.sample.json MQTTSimulator/appsettings.json
+cp MQTTSimulator/devices.sample.yaml MQTTSimulator/devices.yaml
 ```
 
-> **Note:** `appsettings.json` is excluded from source control via `.gitignore` because it contains sensitive credentials. Never commit it. Use `appsettings.sample.json` as a template.
-
-Edit `MQTTSimulator/appsettings.json` to define your telemetry profiles and devices. The configuration has three main sections:
-
-#### Connection Delay
-
-```json
-"ConnectionDelayMs": 100
-```
-
-Milliseconds to wait between starting each device connection. Set to `0` for immediate parallel startup. Useful when simulating many devices to avoid overwhelming the broker with simultaneous TLS handshakes.
-
-#### Telemetry Profiles
-
-Define reusable sets of telemetry fields. Multiple devices can reference the same profile — each gets its own independent generator state.
-
-```json
-"TelemetryProfiles": {
-  "environmental": [
-    {
-      "Name": "temperature",
-      "DataType": "double",
-      "Generator": "Increment",
-      "InitialValue": 20.0,
-      "Step": 1.0,
-      "Min": 15.0,
-      "Max": 30.0
-    },
-    {
-      "Name": "humidity",
-      "DataType": "double",
-      "Generator": "RandomRange",
-      "Min": 40.0,
-      "Max": 80.0
-    }
-  ]
-}
-```
-
-#### Devices
-
-Each device references a telemetry profile by name and specifies its broker connection details.
-
-```json
-"Devices": [
-  {
-    "DeviceId": "sensor-001",
-    "Enabled": true,
-    "SendIntervalMs": 5000,
-    "TelemetryProfileName": "environmental",
-    "Broker": {
-      "Type": "IoTHub",
-      "AuthMethod": "SAS",
-      "ConnectionString": "HostName=myhub.azure-devices.net;DeviceId=sensor-001;SharedAccessKey=your-base64-key"
-    }
-  }
-]
-```
+> **Note:** `devices.yaml` is excluded from source control via `.gitignore` because it contains sensitive credentials. Never commit it. Use `devices.sample.yaml` as a template.
 
 ### 3. Run
 
@@ -102,160 +48,230 @@ dotnet run --project MQTTSimulator
 
 Press **Ctrl+C** to gracefully stop all devices.
 
+## Configuration
+
+All configuration lives in `devices.yaml`. The file has four sections under `simulator:`.
+
+### Global Settings
+
+```yaml
+simulator:
+  connectionDelayMs: 100    # Stagger (ms) between device connections
+  defaultInterval: 5s       # Default send interval for all devices/fleets
+```
+
+Interval format: `"5s"` (seconds), `"500ms"` (milliseconds), `"1m"` (minutes).
+
+### Telemetry Profiles
+
+Reusable payload schemas. Multiple devices can share a profile — each gets its own independent generator state.
+
+```yaml
+  profiles:
+    environmental:
+      temperature: { gen: Increment, init: 20, step: 1, min: 15, max: 30 }
+      humidity:    { gen: Random, min: 40, max: 80 }
+      pressure:    { gen: Sine, amplitude: 10, offset: 1013.25, period: 60 }
+      status:      { gen: Cycle, values: [ON, STANDBY, OFF] }
+      timestamp:   { gen: Timestamp }
+      location:    { gen: HashSelect, values: [Building-A, Building-B, Building-C] }
+```
+
+### Devices
+
+Each device references a profile and specifies its broker connection. Auth and port are inferred automatically — only set `interval` if overriding the `defaultInterval`.
+
+```yaml
+  devices:
+    - id: sensor-001
+      profile: environmental
+      broker:
+        type: IoTHub
+        connection: "HostName=myhub.azure-devices.net;DeviceId=sensor-001;SharedAccessKey=your-key"
+```
+
+### Fleets
+
+Spawn multiple simulated devices from a single connection string. Devices are named `{prefix}-001`, `{prefix}-002`, etc.
+
+```yaml
+  fleets:
+    - type: IoTHub
+      connection: "HostName=myhub.azure-devices.net;SharedAccessKeyName=iothubowner;SharedAccessKey=your-key"
+      prefix: sim
+      count: 5
+      profile: environmental
+```
+
 ## Broker Types
 
 ### IoT Hub (`IoTHub`)
 
-Connects to Azure IoT Hub using raw MQTT 3.1.1. Publishes to `devices/{deviceId}/messages/events/`.
+Connects via raw MQTT 3.1.1. Publishes to `devices/{deviceId}/messages/events/`. Auth is auto-detected from configuration — no `auth` field needed.
 
-| Property | Description |
-|----------|-------------|
-| `AuthMethod` | `SAS` or `X509` |
-| `ConnectionString` | IoT Hub device connection string (SAS auth) — parsed at runtime to extract hostname, device ID, and key |
-| `Hostname` | IoT Hub hostname (X.509 auth only) |
-| `CertificatePath` | Path to client certificate PEM file (X.509 auth) |
-| `KeyPath` | Path to private key PEM file (X.509 auth) |
-
-**SAS example:**
-```json
-{
-  "Type": "IoTHub",
-  "AuthMethod": "SAS",
-  "ConnectionString": "HostName=myhub.azure-devices.net;DeviceId=sensor-001;SharedAccessKey=your-base64-key"
-}
+**SAS (connection string):**
+```yaml
+broker:
+  type: IoTHub
+  connection: "HostName=myhub.azure-devices.net;DeviceId=sensor-001;SharedAccessKey=your-key"
 ```
 
-The connection string is available in the Azure Portal under **IoT Hub > Devices > your device > Primary connection string**.
+The connection string is available in the Azure Portal under **IoT Hub → Devices → your device → Primary connection string**.
 
-**X.509 example:**
-```json
-{
-  "Type": "IoTHub",
-  "Hostname": "myhub.azure-devices.net",
-  "AuthMethod": "X509",
-  "CertificatePath": "certs/device.pem",
-  "KeyPath": "certs/device-key.pem"
-}
+**X.509 (certificate):**
+```yaml
+broker:
+  type: IoTHub
+  host: myhub.azure-devices.net
+  cert: certs/device.pem
+  key: certs/device-key.pem
 ```
 
-#### IoT Hub Fleet Provisioning
+| Property | Required | Description |
+|----------|----------|-------------|
+| `connection` | SAS | Device connection string |
+| `host` | X.509 | IoT Hub hostname |
+| `cert` | X.509 | Path to client certificate PEM file |
+| `key` | X.509 | Path to private key PEM file |
 
-Instead of configuring each device individually, you can use the `IoTHubFleets` section to auto-provision a batch of devices using an IoT Hub owner connection string. The simulator will create the devices in IoT Hub if they don't already exist, retrieve their connection strings, and run them all with the same telemetry profile.
+### Event Hubs (`EventHub`)
 
-| Property | Description |
-|----------|-------------|
-| `Enabled` | Whether this fleet is active (default: `true`) |
-| `ConnectionString` | IoT Hub owner/service connection string (e.g., `iothubowner` policy) |
-| `DevicePrefix` | Prefix for device IDs (devices are named `{prefix}-001`, `{prefix}-002`, etc.) |
-| `DeviceCount` | Number of devices to create and simulate |
-| `SendIntervalMs` | Telemetry send interval in milliseconds |
-| `TelemetryProfileName` | Name of the telemetry profile to use for all fleet devices |
+Sends telemetry to Azure Event Hubs using the `Azure.Messaging.EventHubs` SDK. Each device's ID is used as the partition key.
 
-```json
-"IoTHubFleets": [
-  {
-    "Enabled": true,
-    "ConnectionString": "HostName=myhub.azure-devices.net;SharedAccessKeyName=iothubowner;SharedAccessKey=your-owner-key",
-    "DevicePrefix": "sim",
-    "DeviceCount": 10,
-    "SendIntervalMs": 5000,
-    "TelemetryProfileName": "environmental"
-  }
-]
+```yaml
+broker:
+  type: EventHub
+  connection: "Endpoint=sb://mynamespace.servicebus.windows.net/;SharedAccessKeyName=send;SharedAccessKey=your-key"
+  hub: my-event-hub
 ```
 
-The owner connection string is available in the Azure Portal under **IoT Hub > Shared access policies > iothubowner**. Fleet devices are combined with any individually configured devices and respect the `ConnectionDelayMs` stagger.
+| Property | Required | Description |
+|----------|----------|-------------|
+| `connection` | Yes | Event Hub connection string |
+| `hub` | No | Event Hub entity name (omit if `EntityPath` is in the connection string) |
 
 ### MQTT with Mutual TLS (`MqttMtls`)
 
 Standard MQTT over mutual TLS. Works with Azure Event Grid MQTT broker and any mTLS-enabled broker.
 
-| Property | Description |
-|----------|-------------|
-| `Hostname` | Broker hostname |
-| `Port` | Broker port (default: `8883`) |
-| `Topic` | MQTT topic to publish to |
-| `CertificatePath` | Path to client certificate PEM file |
-| `KeyPath` | Path to private key PEM file |
-| `CaCertificatePath` | Path to server/CA certificate PEM file |
-
-```json
-{
-  "Type": "MqttMtls",
-  "Hostname": "myns.westus2-1.ts.eventgrid.azure.net",
-  "Port": 8883,
-  "Topic": "devices/gateway-001/telemetry",
-  "CertificatePath": "certs/client.pem",
-  "KeyPath": "certs/client-key.pem",
-  "CaCertificatePath": "certs/ca.pem"
-}
+```yaml
+broker:
+  type: MqttMtls
+  host: myns.westus2-1.ts.eventgrid.azure.net
+  topic: devices/gateway-001/telemetry
+  cert: certs/client.pem
+  key: certs/client-key.pem
+  ca: certs/ca.pem
 ```
+
+| Property | Required | Description |
+|----------|----------|-------------|
+| `host` | Yes | Broker hostname |
+| `topic` | Yes | MQTT topic to publish to |
+| `cert` | Yes | Path to client certificate PEM file |
+| `key` | Yes | Path to private key PEM file |
+| `ca` | Yes | Path to CA certificate PEM file |
 
 ### MQTT with Username/Password (`Mqtt` / `MqttTls`)
 
-Standard MQTT with username/password authentication. Use `Mqtt` for plain connections or `MqttTls` for TLS-encrypted connections.
+Standard MQTT with optional TLS. Use `Mqtt` for plain connections or `MqttTls` for TLS-encrypted.
 
-| Property | Description |
-|----------|-------------|
-| `Hostname` | Broker hostname |
-| `Port` | Broker port (default: `1883` for Mqtt, `8883` for MqttTls) |
-| `Topic` | MQTT topic to publish to |
-| `Username` | MQTT username |
-| `Password` | MQTT password |
-| `CaCertificatePath` | Path to CA certificate PEM file (MqttTls only, optional) |
-
-```json
-{
-  "Type": "MqttTls",
-  "Hostname": "broker.example.com",
-  "Port": 8883,
-  "Topic": "devices/device1/telemetry",
-  "Username": "device1",
-  "Password": "secret",
-  "CaCertificatePath": "certs/ca.pem"
-}
+```yaml
+broker:
+  type: Mqtt          # or MqttTls
+  host: localhost
+  topic: devices/device1/telemetry
+  user: device1
+  pass: secret
 ```
+
+| Property | Required | Description |
+|----------|----------|-------------|
+| `host` | Yes | Broker hostname |
+| `topic` | Yes | MQTT topic to publish to |
+| `port` | No | Override default port (Mqtt: 1883, MqttTls: 8883) |
+| `user` | No | MQTT username |
+| `pass` | No | MQTT password |
+| `ca` | No | Path to CA certificate PEM file (MqttTls only) |
+
+## Smart Defaults
+
+To keep configuration minimal, several fields are inferred automatically:
+
+| Feature | Rule |
+|---------|------|
+| **Auth** | `connection` present → SAS; `cert` present → X.509 |
+| **Port** | IoTHub/MqttTls/MqttMtls → 8883; EventHub → 5671; Mqtt → 1883 |
+| **Interval** | Inherits `defaultInterval` unless device/fleet overrides |
+| **Enabled** | Defaults to `true` |
 
 ## Field Generators
 
-| Generator | Description | Config Properties |
-|-----------|-------------|-------------------|
-| `Increment` | Bounces between min and max by step | `InitialValue`, `Step`, `Min`, `Max` |
-| `RandomRange` | Random value between min and max | `Min`, `Max` |
-| `SineWave` | Sinusoidal oscillation | `Amplitude`, `Offset`, `PeriodSeconds` |
-| `Static` | Constant value | `Value` (string) or `InitialValue` (numeric) |
-| `EnumCycle` | Cycles through a list of strings | `Values` (string array) |
+| Generator | Description | Parameters |
+|-----------|-------------|------------|
+| `Increment` | Bounces between min and max by step | `init`, `step`, `min`, `max` |
+| `Random` | Uniform random in range | `min`, `max` |
+| `Sine` | Sinusoidal oscillation over time | `amplitude`, `offset`, `period` (seconds) |
+| `Static` | Constant value (auto-detects type) | `value` (string) or `init` (numeric) |
+| `Cycle` | Rotates through a list of values | `values` (list) |
 | `Timestamp` | Current UTC time in ISO 8601 | *(none)* |
+| `HashSelect` | Deterministic pick based on device ID hash | `values` (list) |
 
-## Docker
+## Fleet Provisioning
 
-### Build
+Fleets let you spawn many simulated devices from a single connection string. The `type` field is required.
 
-```bash
-docker build -t mqtt-simulator .
+### IoT Hub Fleets
+
+Devices are auto-created in IoT Hub via the REST API using an owner-level connection string. Each device gets its own SAS key.
+
+```yaml
+fleets:
+  - type: IoTHub
+    connection: "HostName=myhub.azure-devices.net;SharedAccessKeyName=iothubowner;SharedAccessKey=your-key"
+    prefix: sim
+    count: 10
+    profile: environmental
 ```
 
-### Run
+The owner connection string is available in the Azure Portal under **IoT Hub → Shared access policies → iothubowner**.
 
-```bash
-docker run mqtt-simulator
+### Event Hub Fleets
+
+All devices share one Event Hub connection string. Each device's ID is used as the partition key — no server-side provisioning needed.
+
+```yaml
+fleets:
+  - type: EventHub
+    connection: "Endpoint=sb://mynamespace.servicebus.windows.net/;SharedAccessKeyName=send;SharedAccessKey=your-key"
+    hub: my-event-hub
+    prefix: eh
+    count: 10
+    profile: environmental
 ```
 
-Override configuration via environment variables using the .NET configuration naming convention:
+| Property | Required | Description |
+|----------|----------|-------------|
+| `type` | Yes | `IoTHub` or `EventHub` |
+| `connection` | Yes | Connection string (owner-level for IoT Hub, SAS for Event Hub) |
+| `hub` | EventHub | Event Hub entity name |
+| `prefix` | Yes | Device ID prefix (devices named `{prefix}-001`, etc.) |
+| `count` | Yes | Number of devices to simulate |
+| `profile` | Yes | Telemetry profile name |
+| `interval` | No | Override send interval (inherits `defaultInterval`) |
+| `enabled` | No | `true` / `false` (default: `true`) |
 
-```bash
-docker run \
-  -e Simulator__Devices__0__Broker__ConnectionString="HostName=myhub.azure-devices.net;DeviceId=my-device;SharedAccessKey=your-key" \
-  mqtt-simulator
-```
+## Configuration Validation
 
-Mount certificate files if using X.509 or mTLS:
+The simulator validates all configuration at startup before attempting any connections. Errors are logged with clear messages and the app will not start until issues are fixed.
 
-```bash
-docker run \
-  -v /path/to/certs:/app/certs \
-  mqtt-simulator
-```
+**Validated rules include:**
+- Profiles have at least one field with valid generator parameters
+- Device IDs are present and unique
+- Profiles referenced by devices/fleets exist
+- Broker-specific required fields are present (e.g., `connection` for IoTHub SAS, `host` + `cert` + `key` + `ca` + `topic` for MqttMtls)
+- Fleet `type` is set, `connection` / `prefix` / `profile` are present, `count > 0`
+- Certificate/key file paths are checked (warnings if missing)
 
 ## Payload Format
 
@@ -271,3 +287,27 @@ Each message is a JSON object with the device ID and all configured telemetry fi
   "timestamp": "2026-02-25T15:30:00.0000000Z",
   "location": "Building-A"
 }
+```
+
+## Docker
+
+### Build
+
+```bash
+docker build -t mqtt-simulator .
+```
+
+### Run
+
+```bash
+docker run mqtt-simulator
+```
+
+Mount your `devices.yaml` and certificate files:
+
+```bash
+docker run \
+  -v /path/to/devices.yaml:/app/devices.yaml \
+  -v /path/to/certs:/app/certs \
+  mqtt-simulator
+```

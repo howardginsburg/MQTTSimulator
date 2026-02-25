@@ -23,33 +23,28 @@ public class MqttMtlsBrokerClient : IBrokerClient
 
     public async Task ConnectAsync(CancellationToken cancellationToken = default)
     {
-        using var ephemeralCert = X509Certificate2.CreateFromPemFile(
-            _brokerConfig.CertificatePath,
-            _brokerConfig.KeyPath);
-        var clientCert = new X509Certificate2(ephemeralCert.Export(X509ContentType.Pfx));
+        var clientCert = CertificateHelper.LoadClientCertFromPem(_brokerConfig.Cert, _brokerConfig.Key);
 
         var tlsOptionsBuilder = new MqttClientTlsOptionsBuilder()
             .UseTls(true)
             .WithClientCertificates(new[] { clientCert });
 
-        if (!string.IsNullOrEmpty(_brokerConfig.CaCertificatePath))
+        if (!string.IsNullOrEmpty(_brokerConfig.Ca))
         {
-            var caCert = LoadCertificateFromPem(_brokerConfig.CaCertificatePath);
+            var caCert = CertificateHelper.LoadFromPem(_brokerConfig.Ca);
             tlsOptionsBuilder.WithTrustChain(new X509Certificate2Collection(caCert));
         }
 
-        var port = _brokerConfig.Port > 0 ? _brokerConfig.Port : 8883;
+        var port = _brokerConfig.EffectivePort;
         var optionsBuilder = new MqttClientOptionsBuilder()
-            .WithTcpServer(_brokerConfig.Hostname, port)
-            .WithClientId(_deviceConfig.DeviceId)
-            .WithCredentials(_deviceConfig.DeviceId)
+            .WithTcpServer(_brokerConfig.Host, port)
+            .WithClientId(_deviceConfig.Id)
+            .WithCredentials(_deviceConfig.Id)
             .WithTlsOptions(tlsOptionsBuilder.Build());
 
-        var options = optionsBuilder.Build();
-
-        var response = await _client.ConnectAsync(options, cancellationToken);
+        var response = await _client.ConnectAsync(optionsBuilder.Build(), cancellationToken);
         _logger.LogInformation("Device {DeviceId} connected to {Hostname}:{Port} via mTLS (ResultCode: {ResultCode})",
-            _deviceConfig.DeviceId, _brokerConfig.Hostname, port, response.ResultCode);
+            _deviceConfig.Id, _brokerConfig.Host, port, response.ResultCode);
     }
 
     public async Task SendAsync(string payload, CancellationToken cancellationToken = default)
@@ -63,7 +58,7 @@ public class MqttMtlsBrokerClient : IBrokerClient
 
         await _client.PublishAsync(message, cancellationToken);
         _logger.LogDebug("Device {DeviceId} sent {Bytes} bytes to {Topic}",
-            _deviceConfig.DeviceId, payload.Length, _brokerConfig.Topic);
+            _deviceConfig.Id, payload.Length, _brokerConfig.Topic);
     }
 
     public async Task DisconnectAsync(CancellationToken cancellationToken = default)
@@ -72,19 +67,8 @@ public class MqttMtlsBrokerClient : IBrokerClient
         {
             await _client.DisconnectAsync(new MqttClientDisconnectOptionsBuilder().Build(), cancellationToken);
             _logger.LogInformation("Device {DeviceId} disconnected from {Hostname}",
-                _deviceConfig.DeviceId, _brokerConfig.Hostname);
+                _deviceConfig.Id, _brokerConfig.Host);
         }
-    }
-
-    private static X509Certificate2 LoadCertificateFromPem(string path)
-    {
-        var pem = File.ReadAllText(path);
-        var base64 = pem
-            .Replace("-----BEGIN CERTIFICATE-----", "")
-            .Replace("-----END CERTIFICATE-----", "")
-            .Replace("\r", "")
-            .Replace("\n", "");
-        return new X509Certificate2(Convert.FromBase64String(base64));
     }
 
     public async ValueTask DisposeAsync()

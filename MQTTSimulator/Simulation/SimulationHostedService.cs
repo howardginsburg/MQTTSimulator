@@ -33,15 +33,52 @@ public class SimulationHostedService : IHostedService
     {
         _cts = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
 
+        // Validate configuration before doing anything
+        if (!ConfigValidator.Validate(_config, _logger))
+            throw new InvalidOperationException("Configuration validation failed. See log output for details.");
+
         // Provision fleet devices from IoT Hub owner connection strings
         var allDevices = new List<DeviceConfig>(_config.Devices);
 
-        foreach (var fleet in _config.IoTHubFleets.Where(f => f.Enabled))
+        // Apply default interval to devices/fleets that don't override
+        foreach (var d in allDevices)
+            d.EffectiveInterval = _config.DefaultInterval;
+
+        foreach (var fleet in _config.Fleets.Where(f => f.Enabled))
         {
-            _logger.LogInformation("Provisioning {Count} device(s) with prefix '{Prefix}' in IoT Hub",
-                fleet.DeviceCount, fleet.DevicePrefix);
-            var manager = new IoTHubDeviceManager(fleet.ConnectionString, _logger);
-            var fleetDevices = await manager.ProvisionDevicesAsync(fleet, cancellationToken);
+            fleet.EffectiveInterval = _config.DefaultInterval;
+            _logger.LogInformation("Provisioning {Count} device(s) with prefix '{Prefix}' ({Type})",
+                fleet.Count, fleet.Prefix, fleet.Type);
+
+            List<DeviceConfig> fleetDevices;
+
+            if (fleet.Type == BrokerType.EventHub)
+            {
+                fleetDevices = new List<DeviceConfig>();
+                for (int i = 1; i <= fleet.Count; i++)
+                {
+                    fleetDevices.Add(new DeviceConfig
+                    {
+                        Id = $"{fleet.Prefix}-{i:D3}",
+                        Enabled = true,
+                        Interval = fleet.Interval,
+                        EffectiveInterval = fleet.EffectiveInterval,
+                        Profile = fleet.Profile,
+                        Broker = new BrokerConfig
+                        {
+                            Type = BrokerType.EventHub,
+                            Connection = fleet.Connection,
+                            Hub = fleet.Hub
+                        }
+                    });
+                }
+            }
+            else
+            {
+                var manager = new IoTHubDeviceManager(fleet.Connection, _logger);
+                fleetDevices = await manager.ProvisionDevicesAsync(fleet, cancellationToken);
+            }
+
             allDevices.AddRange(fleetDevices);
         }
 
@@ -52,27 +89,27 @@ public class SimulationHostedService : IHostedService
         {
             var deviceConfig = enabledDevices[i];
 
-            if (!_config.TelemetryProfiles.TryGetValue(deviceConfig.TelemetryProfileName, out var fieldConfigs))
+            if (!_config.Profiles.TryGetValue(deviceConfig.Profile, out var fieldConfigs))
             {
                 _logger.LogError("Device {DeviceId} references unknown telemetry profile '{ProfileName}'. Skipping.",
-                    deviceConfig.DeviceId, deviceConfig.TelemetryProfileName);
+                    deviceConfig.Id, deviceConfig.Profile);
                 continue;
             }
 
-            _display.RegisterDevice(deviceConfig.DeviceId, deviceConfig.Broker.Type.ToString());
+            _display.RegisterDevice(deviceConfig.Id, deviceConfig.Broker.Type.ToString());
 
             if (_config.ConnectionDelayMs > 0 && i > 0)
             {
                 await Task.Delay(i * _config.ConnectionDelayMs, cancellationToken);
             }
 
-            var deviceLogger = _loggerFactory.CreateLogger($"Device.{deviceConfig.DeviceId}");
+            var deviceLogger = _loggerFactory.CreateLogger($"Device.{deviceConfig.Id}");
             var simulator = new DeviceSimulator(deviceConfig, fieldConfigs, deviceLogger, _display);
             _simulators.Add(simulator);
             _runningTasks.Add(simulator.RunAsync(_cts.Token));
 
             _logger.LogInformation("Started device {DeviceId} with profile '{ProfileName}' (interval: {IntervalMs}ms)",
-                deviceConfig.DeviceId, deviceConfig.TelemetryProfileName, deviceConfig.SendIntervalMs);
+                deviceConfig.Id, deviceConfig.Profile, deviceConfig.IntervalMs);
         }
 
         _displayTask = _display.RunAsync(_cts.Token);

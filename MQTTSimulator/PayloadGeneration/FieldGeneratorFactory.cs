@@ -4,18 +4,18 @@ namespace MQTTSimulator.PayloadGeneration;
 
 public static class FieldGeneratorFactory
 {
-    public static IFieldGenerator Create(FieldConfig config, string deviceId)
+    public static IFieldGenerator Create(string fieldName, FieldConfig config, string deviceId)
     {
-        return config.Generator switch
+        return config.Gen switch
         {
-            GeneratorType.Increment => new IncrementGenerator(config),
-            GeneratorType.RandomRange => new RandomRangeGenerator(config),
-            GeneratorType.SineWave => new SineWaveGenerator(config),
-            GeneratorType.Static => new StaticGenerator(config),
-            GeneratorType.EnumCycle => new EnumCycleGenerator(config),
-            GeneratorType.Timestamp => new TimestampGenerator(config.Name),
-            GeneratorType.DeviceHashSelect => new DeviceHashSelectGenerator(config, deviceId),
-            _ => throw new ArgumentException($"Unknown generator type: {config.Generator}")
+            GeneratorType.Increment => new IncrementGenerator(fieldName, config),
+            GeneratorType.Random => new RandomRangeGenerator(fieldName, config),
+            GeneratorType.Sine => new SineWaveGenerator(fieldName, config),
+            GeneratorType.Static => new StaticGenerator(fieldName, config),
+            GeneratorType.Cycle => new EnumCycleGenerator(fieldName, config),
+            GeneratorType.Timestamp => new TimestampGenerator(fieldName),
+            GeneratorType.HashSelect => new DeviceHashSelectGenerator(fieldName, config, deviceId),
+            _ => throw new ArgumentException($"Unknown generator type: {config.Gen}")
         };
     }
 }

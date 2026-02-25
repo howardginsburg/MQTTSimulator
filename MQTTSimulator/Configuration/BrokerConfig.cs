@@ -1,17 +1,14 @@
-using System.Text.Json.Serialization;
-
 namespace MQTTSimulator.Configuration;
 
-[JsonConverter(typeof(JsonStringEnumConverter))]
 public enum BrokerType
 {
     IoTHub,
     Mqtt,
     MqttTls,
-    MqttMtls
+    MqttMtls,
+    EventHub
 }
 
-[JsonConverter(typeof(JsonStringEnumConverter))]
 public enum AuthMethod
 {
     SAS,
@@ -21,20 +18,28 @@ public enum AuthMethod
 public class BrokerConfig
 {
     public BrokerType Type { get; set; } = BrokerType.Mqtt;
-    public string Hostname { get; set; } = string.Empty;
-    public int Port { get; set; } = 1883;
+    public string Host { get; set; } = string.Empty;
+    public int Port { get; set; }
     public string Topic { get; set; } = string.Empty;
 
-    // IoT Hub auth
-    public AuthMethod AuthMethod { get; set; } = AuthMethod.SAS;
-    public string ConnectionString { get; set; } = string.Empty;
+    public string Connection { get; set; } = string.Empty;
 
-    // Username/password auth (Mqtt, MqttTls)
-    public string Username { get; set; } = string.Empty;
-    public string Password { get; set; } = string.Empty;
+    public string User { get; set; } = string.Empty;
+    public string Pass { get; set; } = string.Empty;
 
-    // Certificate paths (PEM format)
-    public string CertificatePath { get; set; } = string.Empty;
-    public string KeyPath { get; set; } = string.Empty;
-    public string CaCertificatePath { get; set; } = string.Empty;
+    public string Cert { get; set; } = string.Empty;
+    public string Key { get; set; } = string.Empty;
+    public string Ca { get; set; } = string.Empty;
+    public string Hub { get; set; } = string.Empty;
+
+    public AuthMethod Auth => !string.IsNullOrEmpty(Connection) ? AuthMethod.SAS
+        : !string.IsNullOrEmpty(Cert) ? AuthMethod.X509
+        : AuthMethod.SAS;
+
+    public int EffectivePort => Port > 0 ? Port : Type switch
+    {
+        BrokerType.IoTHub or BrokerType.MqttTls or BrokerType.MqttMtls => 8883,
+        BrokerType.EventHub => 5671,
+        _ => 1883
+    };
 }

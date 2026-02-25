@@ -8,15 +8,16 @@ public class StaticGenerator : IFieldGenerator
 
     public string FieldName { get; }
 
-    public StaticGenerator(FieldConfig config)
+    public StaticGenerator(string fieldName, FieldConfig config)
     {
-        FieldName = config.Name;
-        _value = config.DataType.ToLowerInvariant() switch
+        FieldName = fieldName;
+        _value = config.Value switch
         {
-            "double" => config.InitialValue,
-            "int" => (int)config.InitialValue,
-            "bool" => bool.TryParse(config.Value, out var b) && b,
-            _ => config.Value
+            "" when config.Init != 0 => config.Init,
+            "" => 0.0,
+            var v when double.TryParse(v, out var d) => d,
+            var v when bool.TryParse(v, out var b) => b,
+            var v => v
         };
     }
 

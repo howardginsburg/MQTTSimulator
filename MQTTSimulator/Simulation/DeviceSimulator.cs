@@ -15,13 +15,13 @@ public class DeviceSimulator : IAsyncDisposable
     private readonly ConsoleDisplay _display;
     private long _messageId;
 
-    public DeviceSimulator(DeviceConfig deviceConfig, List<FieldConfig> fieldConfigs, ILogger logger, ConsoleDisplay display)
+    public DeviceSimulator(DeviceConfig deviceConfig, Dictionary<string, FieldConfig> fieldConfigs, ILogger logger, ConsoleDisplay display)
     {
         _deviceConfig = deviceConfig;
         _logger = logger;
         _display = display;
         _brokerClient = BrokerClientFactory.Create(deviceConfig, logger);
-        _generators = fieldConfigs.Select(f => FieldGeneratorFactory.Create(f, deviceConfig.DeviceId)).ToList();
+        _generators = fieldConfigs.Select(kvp => FieldGeneratorFactory.Create(kvp.Key, kvp.Value, deviceConfig.Id)).ToList();
     }
 
     public async Task RunAsync(CancellationToken cancellationToken)
@@ -29,26 +29,26 @@ public class DeviceSimulator : IAsyncDisposable
         try
         {
             await _brokerClient.ConnectAsync(cancellationToken);
-            _display.UpdateStatus(_deviceConfig.DeviceId, "Connected");
+            _display.UpdateStatus(_deviceConfig.Id, "Connected");
 
             while (!cancellationToken.IsCancellationRequested)
             {
                 var payload = BuildPayload();
-                _logger.LogInformation("Device {DeviceId} sending telemetry: {Payload}", _deviceConfig.DeviceId, payload);
+                _logger.LogInformation("Device {DeviceId} sending telemetry: {Payload}", _deviceConfig.Id, payload);
                 await _brokerClient.SendAsync(payload, cancellationToken);
-                _display.RecordTelemetry(_deviceConfig.DeviceId, _messageId, payload);
-                await Task.Delay(_deviceConfig.SendIntervalMs, cancellationToken);
+                _display.RecordTelemetry(_deviceConfig.Id, _messageId, payload);
+                await Task.Delay(_deviceConfig.IntervalMs, cancellationToken);
             }
         }
         catch (OperationCanceledException)
         {
-            _logger.LogInformation("Device {DeviceId} simulation stopped", _deviceConfig.DeviceId);
-            _display.UpdateStatus(_deviceConfig.DeviceId, "Stopped");
+            _logger.LogInformation("Device {DeviceId} simulation stopped", _deviceConfig.Id);
+            _display.UpdateStatus(_deviceConfig.Id, "Stopped");
         }
         catch (Exception ex)
         {
-            _logger.LogError(ex, "Device {DeviceId} encountered an error", _deviceConfig.DeviceId);
-            _display.RecordError(_deviceConfig.DeviceId, ex.Message);
+            _logger.LogError(ex, "Device {DeviceId} encountered an error", _deviceConfig.Id);
+            _display.RecordError(_deviceConfig.Id, ex.Message);
         }
         finally
         {
@@ -61,7 +61,7 @@ public class DeviceSimulator : IAsyncDisposable
         var data = new Dictionary<string, object>
         {
             ["messageId"] = ++_messageId,
-            ["deviceId"] = _deviceConfig.DeviceId
+            ["deviceId"] = _deviceConfig.Id
         };
 
         foreach (var generator in _generators)

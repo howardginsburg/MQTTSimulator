@@ -1,12 +1,15 @@
 namespace MQTTSimulator.Configuration;
 
-public class DeviceConfig
+public class FleetConfig
 {
-    public string Id { get; set; } = string.Empty;
+    public BrokerType Type { get; set; }
     public bool Enabled { get; set; } = true;
+    public string Connection { get; set; } = string.Empty;
+    public string Hub { get; set; } = string.Empty;
+    public string Prefix { get; set; } = "device";
+    public int Count { get; set; } = 1;
     public string? Interval { get; set; }
     public string Profile { get; set; } = string.Empty;
-    public BrokerConfig Broker { get; set; } = new();
 
     // Set by SimulationHostedService when Interval is null
     internal string EffectiveInterval { get; set; } = "5s";

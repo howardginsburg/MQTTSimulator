@@ -11,12 +11,12 @@ public class SineWaveGenerator : IFieldGenerator
 
     public string FieldName { get; }
 
-    public SineWaveGenerator(FieldConfig config)
+    public SineWaveGenerator(string fieldName, FieldConfig config)
     {
-        FieldName = config.Name;
+        FieldName = fieldName;
         _amplitude = config.Amplitude;
         _offset = config.Offset;
-        _periodSeconds = config.PeriodSeconds;
+        _periodSeconds = config.Period;
         _startTime = DateTime.UtcNow;
     }
 

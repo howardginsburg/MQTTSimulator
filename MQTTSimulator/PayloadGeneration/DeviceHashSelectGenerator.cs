@@ -8,9 +8,9 @@ public class DeviceHashSelectGenerator : IFieldGenerator
 
     public string FieldName { get; }
 
-    public DeviceHashSelectGenerator(FieldConfig config, string deviceId)
+    public DeviceHashSelectGenerator(string fieldName, FieldConfig config, string deviceId)
     {
-        FieldName = config.Name;
+        FieldName = fieldName;
         var hash = Math.Abs(deviceId.GetHashCode(StringComparison.Ordinal));
         var index = hash % config.Values.Count;
         _selectedValue = config.Values[index];

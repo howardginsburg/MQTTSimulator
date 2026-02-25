@@ -12,10 +12,10 @@ public class IncrementGenerator : IFieldGenerator
 
     public string FieldName { get; }
 
-    public IncrementGenerator(FieldConfig config)
+    public IncrementGenerator(string fieldName, FieldConfig config)
     {
-        FieldName = config.Name;
-        _currentValue = config.InitialValue;
+        FieldName = fieldName;
+        _currentValue = config.Init;
         _step = config.Step;
         _min = config.Min;
         _max = config.Max;
