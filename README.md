@@ -299,10 +299,6 @@ docker build -t mqtt-simulator .
 
 ### Run
 
-```bash
-docker run mqtt-simulator
-```
-
 Mount your `devices.yaml` and certificate files:
 
 ```bash
