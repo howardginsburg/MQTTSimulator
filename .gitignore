@@ -1,0 +1,9 @@
+bin/
+obj/
+.vs/
+*.user
+*.suo
+devices.json
+logs/
+MQTTSimulator/certs/*
+!MQTTSimulator/certs/.gitkeep
