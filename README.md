@@ -7,6 +7,8 @@ A .NET 8 console application that simulates multiple IoT devices sending configu
 - **Multiple broker types**: IoT Hub (SAS / X.509), MQTT with mutual TLS, MQTT with username/password, MQTT over TLS, Azure Event Hubs
 - **Pure MQTT**: Uses MQTTnet directly for MQTT brokers — no Azure Device SDK dependencies
 - **Fleet provisioning**: Auto-provision batches of IoT Hub or Event Hub devices from a single connection string
+- **Named brokers**: Define shared broker connection details once and reference by name — devices override only what differs
+- **Dynamic topic templates**: Use `{deviceId}` in MQTT topic strings — replaced with each device's ID at runtime
 - **YAML configuration**: Clean, compact YAML config with smart defaults — auth, ports, and intervals are inferred automatically
 - **Configurable telemetry**: Define reusable telemetry profiles with 7 field generator types
 - **Startup validation**: Configuration is validated at startup with clear error messages before any connections are made
@@ -50,7 +52,7 @@ Press **Ctrl+C** to gracefully stop all devices.
 
 ## Configuration
 
-All configuration lives in `devices.yaml`. The file has four sections under `simulator:`.
+All configuration lives in `devices.yaml`. The file has five sections under `simulator:`.
 
 ### Global Settings
 
@@ -61,6 +63,64 @@ simulator:
 ```
 
 Interval format: `"5s"` (seconds), `"500ms"` (milliseconds), `"1m"` (minutes).
+
+### Named Brokers
+
+Define shared broker connection details once and reference them by name in devices or fleets. This avoids repeating connection strings, hostnames, and certificate paths across many devices.
+
+```yaml
+  brokers:
+    my-iothub:
+      type: IoTHub
+      host: myhub.azure-devices.net      # device id inferred from device.id
+
+    my-event-grid:
+      type: MqttMtls
+      host: myns.westus2-1.ts.eventgrid.azure.net
+      topic: devices/{deviceId}/telemetry  # {deviceId} resolved at runtime
+      ca: certs/eventgrid-ca.pem
+```
+
+In a device, reference with `name:` and provide only the fields that differ per device:
+
+```yaml
+  devices:
+    - id: sensor-001
+      broker:
+        name: my-iothub
+        key: your-device-shared-access-key   # only the device-specific key
+
+    - id: Device1
+      broker:
+        name: my-event-grid
+        cert: certs/Device1PublicKey.pem     # device-specific cert/key pair
+        key: certs/Device1PrivateKey.pem
+```
+
+In a fleet, reference with `brokerRef:`:
+
+```yaml
+  fleets:
+    - brokerRef: my-event-grid
+      prefix: sensor
+      count: 20
+      profile: environmental
+```
+
+Any field set alongside `name:` or `brokerRef:` takes precedence over the named broker's value. Named brokers are purely optional — inline broker blocks work exactly as before.
+
+### Topic Templates
+
+All MQTT broker types (`Mqtt`, `MqttTls`, `MqttMtls`) support `{deviceId}` as a placeholder in the `topic` field. It is replaced with the actual device ID at runtime:
+
+```yaml
+brokers:
+  my-grid:
+    type: MqttMtls
+    topic: devices/{deviceId}/telemetry   # Device1 → devices/Device1/telemetry
+```
+
+The token is case-insensitive (`{deviceId}`, `{DeviceId}`, `{DEVICEID}` all work). A device can still override the topic entirely by specifying its own `topic:` field.
 
 ### Telemetry Profiles
 
@@ -109,14 +169,28 @@ Spawn multiple simulated devices from a single connection string. Devices are na
 
 Connects via raw MQTT 3.1.1. Publishes to `devices/{deviceId}/messages/events/`. Auth is auto-detected from configuration — no `auth` field needed.
 
-**SAS (connection string):**
+**SAS (full device connection string):**
 ```yaml
 broker:
   type: IoTHub
   connection: "HostName=myhub.azure-devices.net;DeviceId=sensor-001;SharedAccessKey=your-key"
 ```
-
 The connection string is available in the Azure Portal under **IoT Hub → Devices → your device → Primary connection string**.
+
+**SAS via named broker (device ID inferred, only key differs per device):**
+```yaml
+brokers:
+  my-iothub:
+    type: IoTHub
+    host: myhub.azure-devices.net
+
+devices:
+  - id: sensor-001
+    broker:
+      name: my-iothub
+      key: your-device-primary-key   # Primary Key from Azure Portal → IoT Hub → Devices
+```
+The device's `id` is used as the IoT Hub Device ID. The `key` is the device's Primary or Secondary Key (not the full connection string).
 
 **X.509 (certificate):**
 ```yaml
@@ -127,10 +201,11 @@ broker:
   key: certs/device-key.pem
 ```
 
-| Property | Required | Description |
-|----------|----------|-------------|
-| `connection` | SAS | Device connection string |
-| `host` | X.509 | IoT Hub hostname |
+| Property | Auth | Description |
+|----------|------|-------------|
+| `connection` | SAS (full) | Full device connection string |
+| `host` | SAS (named) / X.509 | IoT Hub hostname |
+| `key` | SAS (named) | Device Primary/Secondary Key (from Azure Portal) |
 | `cert` | X.509 | Path to client certificate PEM file |
 | `key` | X.509 | Path to private key PEM file |
 
@@ -158,7 +233,7 @@ Standard MQTT over mutual TLS. Works with Azure Event Grid MQTT broker and any m
 broker:
   type: MqttMtls
   host: myns.westus2-1.ts.eventgrid.azure.net
-  topic: devices/gateway-001/telemetry
+  topic: devices/{deviceId}/telemetry   # {deviceId} resolved at runtime
   cert: certs/client.pem
   key: certs/client-key.pem
   ca: certs/ca.pem
@@ -167,7 +242,7 @@ broker:
 | Property | Required | Description |
 |----------|----------|-------------|
 | `host` | Yes | Broker hostname |
-| `topic` | Yes | MQTT topic to publish to |
+| `topic` | Yes | MQTT topic to publish to. Supports `{deviceId}` placeholder. |
 | `cert` | Yes | Path to client certificate PEM file |
 | `key` | Yes | Path to private key PEM file |
 | `ca` | Yes | Path to CA certificate PEM file |
@@ -180,7 +255,7 @@ Standard MQTT with optional TLS. Use `Mqtt` for plain connections or `MqttTls` f
 broker:
   type: Mqtt          # or MqttTls
   host: localhost
-  topic: devices/device1/telemetry
+  topic: devices/{deviceId}/telemetry   # {deviceId} resolved at runtime
   user: device1
   pass: secret
 ```
@@ -188,7 +263,7 @@ broker:
 | Property | Required | Description |
 |----------|----------|-------------|
 | `host` | Yes | Broker hostname |
-| `topic` | Yes | MQTT topic to publish to |
+| `topic` | Yes | MQTT topic to publish to. Supports `{deviceId}` placeholder. |
 | `port` | No | Override default port (Mqtt: 1883, MqttTls: 8883) |
 | `user` | No | MQTT username |
 | `pass` | No | MQTT password |
@@ -200,8 +275,10 @@ To keep configuration minimal, several fields are inferred automatically:
 
 | Feature | Rule |
 |---------|------|
-| **Auth** | `connection` present → SAS; `cert` present → X.509 |
+| **Auth** | `connection` present → SAS (full); `cert` present → X.509; `host` + `key` (no cert) → SAS via named broker |
 | **Port** | IoTHub/MqttTls/MqttMtls → 8883; Mqtt → 1883 (EventHub uses HTTPS :443) |
+| **IoTHub Device ID** | When using named broker pattern, the device's `id` is used as the IoT Hub Device ID |
+| **Topic resolution** | `{deviceId}` in any MQTT `topic` string is replaced with the device's `id` at runtime |
 | **Interval** | Inherits `defaultInterval` unless device/fleet overrides |
 | **Enabled** | Defaults to `true` |
 
@@ -252,8 +329,9 @@ fleets:
 
 | Property | Required | Description |
 |----------|----------|-------------|
-| `type` | Yes | `IoTHub` or `EventHub` |
-| `connection` | Yes | Connection string (owner-level for IoT Hub, SAS for Event Hub) |
+| `type` | Yes (or `brokerRef`) | `IoTHub` or `EventHub` |
+| `connection` | Yes (or `brokerRef`) | Connection string (owner-level for IoT Hub, SAS for Event Hub) |
+| `brokerRef` | Alt. to type+connection | Name of a broker defined in `simulator.brokers` |
 | `hub` | EventHub | Event Hub entity name |
 | `prefix` | Yes | Device ID prefix (devices named `{prefix}-001`, etc.) |
 | `count` | Yes | Number of devices to simulate |
@@ -269,9 +347,10 @@ The simulator validates all configuration at startup before attempting any conne
 - Profiles have at least one field with valid generator parameters
 - Device IDs are present and unique
 - Profiles referenced by devices/fleets exist
-- Broker-specific required fields are present (e.g., `connection` for IoTHub SAS, `host` + `cert` + `key` + `ca` + `topic` for MqttMtls)
-- Fleet `type` is set, `connection` / `prefix` / `profile` are present, `count > 0`
-- Certificate/key file paths are checked (warnings if missing)
+- Broker-specific required fields are present after named broker resolution (e.g., `connection` or `host`+`key` for IoTHub SAS, `host` + `cert` + `key` + `ca` + `topic` for MqttMtls)
+- Named broker references (`name:` / `brokerRef:`) resolve to a defined broker
+- Fleet `type` or `brokerRef` is set, `connection` / `prefix` / `profile` are present, `count > 0`
+- Certificate/key file paths that refer to PEM files are checked (warnings if missing); IoTHub `key` values (SharedAccessKey strings) are not treated as file paths
 
 ## Payload Format
 

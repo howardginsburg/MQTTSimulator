@@ -28,15 +28,24 @@ public class IoTHubBrokerClient : IBrokerClient
         _logger = logger;
         _client = new MqttFactory().CreateMqttClient();
 
-        if (_brokerConfig.Auth == AuthMethod.SAS)
+        if (_brokerConfig.Auth == AuthMethod.SAS && !string.IsNullOrEmpty(_brokerConfig.Connection))
         {
+            // Full device connection string: HostName=...;DeviceId=...;SharedAccessKey=...
             var parts = ParseConnectionString(_brokerConfig.Connection);
             _hostname = parts.hostname;
             _deviceId = parts.deviceId;
             _deviceKey = parts.sharedAccessKey;
         }
+        else if (_brokerConfig.Auth == AuthMethod.SAS)
+        {
+            // Named broker pattern: host from broker, SharedAccessKey in key, DeviceId inferred from device id
+            _hostname = _brokerConfig.Host;
+            _deviceId = deviceConfig.Id;
+            _deviceKey = _brokerConfig.Key;
+        }
         else
         {
+            // X509
             _hostname = _brokerConfig.Host;
             _deviceId = deviceConfig.Id;
             _deviceKey = string.Empty;

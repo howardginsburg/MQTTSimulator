@@ -9,6 +9,7 @@ public static class ConfigValidator
         var errors = new List<string>();
         var warnings = new List<string>();
 
+        ValidateBrokers(config.Brokers, errors, warnings);
         ValidateProfiles(config.Profiles, errors);
         ValidateDevices(config.Devices, config.Profiles, errors, warnings);
         ValidateFleets(config.Fleets, config.Profiles, errors);
@@ -26,6 +27,23 @@ public static class ConfigValidator
             logger.LogError("{Count} configuration error(s) found. Fix the issues above and restart.", errors.Count);
 
         return errors.Count == 0;
+    }
+
+    private static void ValidateBrokers(
+        Dictionary<string, BrokerConfig> brokers,
+        List<string> errors,
+        List<string> warnings)
+    {
+        // Named brokers are templates — devices override the missing fields.
+        // Only check that any cert/key/ca file paths that ARE specified exist on disk.
+        foreach (var (name, broker) in brokers)
+        {
+            var prefix = $"Broker '{name}'";
+            CheckFileExists(broker.Cert, $"{prefix} → cert", warnings);
+            if (!string.IsNullOrEmpty(broker.Cert))
+                CheckFileExists(broker.Key, $"{prefix} → key", warnings);
+            CheckFileExists(broker.Ca, $"{prefix} → ca", warnings);
+        }
     }
 
     private static void ValidateProfiles(
@@ -114,7 +132,13 @@ public static class ConfigValidator
             else if (!profiles.ContainsKey(device.Profile))
                 errors.Add($"{prefix}: references unknown profile '{device.Profile}'.");
 
-            ValidateBroker(device.Broker, prefix, errors, warnings);
+            // Skip inline broker validation when a named broker ref was used — the
+            // named broker itself is validated by ValidateBrokers, and resolution
+            // (which happens before validation) will have already replaced Broker.Name
+            // with the full config. If Name is still set here it means resolution failed,
+            // and that error was already logged by SimulationHostedService.
+            if (string.IsNullOrEmpty(device.Broker.Name))
+                ValidateBroker(device.Broker, prefix, errors, warnings);
         }
     }
 
@@ -127,9 +151,14 @@ public static class ConfigValidator
         switch (broker.Type)
         {
             case BrokerType.IoTHub:
-                if (string.IsNullOrEmpty(broker.Connection) &&
-                    (string.IsNullOrEmpty(broker.Host) || string.IsNullOrEmpty(broker.Cert) || string.IsNullOrEmpty(broker.Key)))
-                    errors.Add($"{prefix}: IoTHub broker requires either 'connection' (SAS) or 'host' + 'cert' + 'key' (X509).");
+                if (!string.IsNullOrEmpty(broker.Connection))
+                    break; // full device connection string — OK
+                if (!string.IsNullOrEmpty(broker.Host) && !string.IsNullOrEmpty(broker.Key) && string.IsNullOrEmpty(broker.Cert))
+                    break; // named broker pattern: host + key (SharedAccessKey) + device id inferred — OK
+                if (!string.IsNullOrEmpty(broker.Host) && !string.IsNullOrEmpty(broker.Cert) && !string.IsNullOrEmpty(broker.Key))
+                    break; // X509 — OK
+                errors.Add($"{prefix}: IoTHub broker requires 'connection' (full SAS connection string), " +
+                           "'host'+'pass' (SAS with device id inferred), or 'host'+'cert'+'key' (X509).");
                 break;
 
             case BrokerType.EventHub:
@@ -159,9 +188,12 @@ public static class ConfigValidator
                 break;
         }
 
-        // Warn if cert/key files don't exist on disk
+        // Warn if cert/key/ca files don't exist on disk.
+        // Only check key as a file when cert is also set (X509/mTLS) — for IoTHub SAS,
+        // key holds the SharedAccessKey string, not a file path.
         CheckFileExists(broker.Cert, $"{prefix} → cert", warnings);
-        CheckFileExists(broker.Key, $"{prefix} → key", warnings);
+        if (!string.IsNullOrEmpty(broker.Cert))
+            CheckFileExists(broker.Key, $"{prefix} → key", warnings);
         CheckFileExists(broker.Ca, $"{prefix} → ca", warnings);
     }
 

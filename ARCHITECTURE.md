@@ -15,17 +15,19 @@ graph TB
     end
 
     subgraph Config["Configuration Layer"]
-        SimulatorConfig["SimulatorConfig<br/>profiles, devices, fleets,<br/>defaultInterval, connectionDelayMs"]
+        SimulatorConfig["SimulatorConfig<br/>brokers, profiles, devices, fleets,<br/>defaultInterval, connectionDelayMs"]
         ConfigValidator["ConfigValidator<br/>startup validation"]
+        SimulatorConfig --> BrokerDict["Named Brokers<br/>Dictionary&lt;string, BrokerConfig&gt;"]
         SimulatorConfig --> DeviceConfig["DeviceConfig<br/>id, profile, broker, interval"]
-        SimulatorConfig --> FleetConfig["FleetConfig<br/>type, connection, prefix,<br/>count, profile"]
+        SimulatorConfig --> FleetConfig["FleetConfig<br/>type/brokerRef, connection, prefix,<br/>count, profile"]
         SimulatorConfig --> Profiles["Profiles<br/>Dictionary&lt;string, FieldConfig&gt;"]
-        DeviceConfig --> BrokerConfig["BrokerConfig<br/>type, host, connection,<br/>cert, key, hub<br/><i>auto: auth, port</i>"]
+        DeviceConfig --> BrokerConfig["BrokerConfig<br/>name, type, host, connection,<br/>cert, key, hub, topic<br/><i>auto: auth, port, ResolvedTopic()</i>"]
         Profiles --> FieldConfig["FieldConfig<br/>gen, min, max, step,<br/>values, amplitude, etc."]
     end
 
     subgraph Host["Simulation Engine"]
         SHS["SimulationHostedService<br/>IHostedService"]
+        SHS -->|resolves| BrokerResolver["ResolveBrokerRefs()<br/>merges named broker + device overrides"]
         SHS -->|validates| ConfigValidator
         SHS -->|provisions| IoTHubDM["IoTHubDeviceManager<br/>REST API provisioning"]
         SHS -->|creates| EHFleet["EventHub Fleet Builder<br/>shares connection string"]
@@ -120,6 +122,7 @@ sequenceDiagram
 
     P->>Y: Load YAML config
     P->>S: Start hosted service
+    S->>S: ResolveBrokerRefs()<br/>merge named broker definitions into devices/fleets
     S->>V: Validate configuration
     V-->>S: Pass / Fail (throw)
 
@@ -161,16 +164,16 @@ MQTTSimulator/
 ├── MQTTSimulator.csproj                # Project file + NuGet refs
 │
 ├── Configuration/
-│   ├── SimulatorConfig.cs              # Root config: profiles, devices, fleets
+│   ├── SimulatorConfig.cs              # Root config: brokers, profiles, devices, fleets
 │   ├── DeviceConfig.cs                 # Per-device: id, profile, broker, interval
-│   ├── FleetConfig.cs                  # Fleet: type, connection, prefix, count
-│   ├── BrokerConfig.cs                 # Broker: type, host, connection, certs
+│   ├── FleetConfig.cs                  # Fleet: type/brokerRef, connection, prefix, count
+│   ├── BrokerConfig.cs                 # Broker: name, type, host, connection, certs, ResolvedTopic()
 │   ├── FieldConfig.cs                  # Field: generator type + parameters
 │   ├── ConfigValidator.cs              # Startup validation of entire config
 │   └── IntervalParser.cs               # "5s" / "500ms" / "1m" → milliseconds
 │
 ├── Simulation/
-│   ├── SimulationHostedService.cs      # IHostedService — orchestrates everything
+│   ├── SimulationHostedService.cs      # IHostedService — resolves brokers, orchestrates everything
 │   ├── DeviceSimulator.cs              # Per-device loop: connect → send → delay
 │   ├── ConsoleDisplay.cs               # Spectre.Console live dashboard
 │   └── DeviceState.cs                  # Tracks status, message count, last payload
@@ -209,7 +212,10 @@ MQTTSimulator/
 | **Event Hubs via HTTPS REST** | Event Hubs doesn't expose an MQTT endpoint; the REST API allows sending events without any SDK dependency |
 | **YAML configuration** | More readable than JSON for deeply nested device configs; compact inline syntax for field generators |
 | **Smart defaults** | Auth inferred from fields present, ports default by broker type, intervals inherit from `defaultInterval` — keeps YAML minimal |
-| **Startup validation** | All errors surfaced at once before any connections, so users fix config issues in one pass |
+| **Named brokers** | Shared broker config (host, ca, topic template) defined once; devices override only device-specific fields (cert/key). Avoids repeating connection strings across large device lists and makes bulk broker changes a single edit |
+| **Topic templates** | `{deviceId}` in MQTT topic strings is resolved at runtime via `BrokerConfig.ResolvedTopic(deviceId)`. Enables a single named broker to route each device to its own topic without any per-device topic override |
+| **IoTHub named broker pattern** | When `host` + `key` (no `cert`) is used for IoTHub, the device `id` is the DeviceId and `key` is the SharedAccessKey. Matches the Azure Portal field names and keeps per-device config to a single line |
+| **Startup validation** | All errors surfaced at once before any connections, so users fix config issues in one pass. Named broker resolution runs before validation so the validator always sees the fully merged config |
 | **Fleet provisioning** | IoT Hub fleets auto-create devices via REST API; Event Hub fleets share one connection string with device ID as partition key |
 | **Profile reuse** | Telemetry profiles defined once, referenced by name — each device gets independent generator state |
 | **Partition key = device ID** | For Event Hub, using device ID as partition key distributes events across partitions while keeping per-device ordering |

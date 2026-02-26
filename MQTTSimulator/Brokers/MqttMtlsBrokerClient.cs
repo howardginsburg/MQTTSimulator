@@ -49,8 +49,9 @@ public class MqttMtlsBrokerClient : IBrokerClient
 
     public async Task SendAsync(string payload, CancellationToken cancellationToken = default)
     {
+        var topic = _brokerConfig.ResolvedTopic(_deviceConfig.Id);
         var message = new MqttApplicationMessageBuilder()
-            .WithTopic(_brokerConfig.Topic)
+            .WithTopic(topic)
             .WithPayload(payload)
             .WithQualityOfServiceLevel(MQTTnet.Protocol.MqttQualityOfServiceLevel.AtLeastOnce)
             .WithRetainFlag(false)
@@ -58,7 +59,7 @@ public class MqttMtlsBrokerClient : IBrokerClient
 
         await _client.PublishAsync(message, cancellationToken);
         _logger.LogDebug("Device {DeviceId} sent {Bytes} bytes to {Topic}",
-            _deviceConfig.Id, payload.Length, _brokerConfig.Topic);
+            _deviceConfig.Id, payload.Length, topic);
     }
 
     public async Task DisconnectAsync(CancellationToken cancellationToken = default)

@@ -17,7 +17,11 @@ public enum AuthMethod
 
 public class BrokerConfig
 {
-    public BrokerType Type { get; set; } = BrokerType.Mqtt;
+    /// <summary>When set, this broker config is a reference to a named broker in simulator.brokers.</summary>
+    public string? Name { get; set; }
+
+    internal const BrokerType DefaultType = BrokerType.Mqtt;
+    public BrokerType Type { get; set; } = DefaultType;
     public string Host { get; set; } = string.Empty;
     public int Port { get; set; }
     public string Topic { get; set; } = string.Empty;
@@ -41,4 +45,11 @@ public class BrokerConfig
         BrokerType.IoTHub or BrokerType.MqttTls or BrokerType.MqttMtls => 8883,
         _ => 1883
     };
+
+    /// <summary>
+    /// Returns the topic with <c>{deviceId}</c> replaced by the actual device ID.
+    /// Use this everywhere a topic string is needed at runtime.
+    /// </summary>
+    public string ResolvedTopic(string deviceId) =>
+        Topic.Replace("{deviceId}", deviceId, StringComparison.OrdinalIgnoreCase);
 }

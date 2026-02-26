@@ -33,6 +33,10 @@ public class SimulationHostedService : IHostedService
     {
         _cts = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
 
+        // Resolve named broker references before validation so the validator sees the full config
+        if (!ResolveBrokerRefs())
+            throw new InvalidOperationException("Broker reference resolution failed. See log output for details.");
+
         // Validate configuration before doing anything
         if (!ConfigValidator.Validate(_config, _logger))
             throw new InvalidOperationException("Configuration validation failed. See log output for details.");
@@ -114,6 +118,80 @@ public class SimulationHostedService : IHostedService
 
         _displayTask = _display.RunAsync(_cts.Token);
     }
+
+    private bool ResolveBrokerRefs()
+    {
+        var ok = true;
+
+        foreach (var device in _config.Devices)
+        {
+            if (string.IsNullOrEmpty(device.Broker.Name)) continue;
+
+            if (_config.Brokers.TryGetValue(device.Broker.Name, out var named))
+                device.Broker = MergeBroker(named, device.Broker);
+            else
+            {
+                _logger.LogError("Device '{Id}' references unknown broker '{Ref}'. Available brokers: [{List}]",
+                    device.Id, device.Broker.Name, string.Join(", ", _config.Brokers.Keys));
+                ok = false;
+            }
+        }
+
+        foreach (var fleet in _config.Fleets)
+        {
+            if (string.IsNullOrEmpty(fleet.BrokerRef)) continue;
+
+            if (_config.Brokers.TryGetValue(fleet.BrokerRef, out var named))
+            {
+                fleet.Type = named.Type;
+                fleet.Connection = named.Connection;
+                fleet.Hub = named.Hub;
+            }
+            else
+            {
+                _logger.LogError("Fleet '{Prefix}' references unknown broker '{Ref}'. Available brokers: [{List}]",
+                    fleet.Prefix, fleet.BrokerRef, string.Join(", ", _config.Brokers.Keys));
+                ok = false;
+            }
+        }
+
+        return ok;
+    }
+
+    /// <summary>
+    /// Produces a broker config that starts from <paramref name="named"/> and applies
+    /// any non-empty/non-default fields from <paramref name="overrides"/> on top.
+    /// This lets devices share a common named broker while overriding only cert/key/topic/etc.
+    /// </summary>
+    private static BrokerConfig MergeBroker(BrokerConfig named, BrokerConfig overrides) => new()
+    {
+        Type       = overrides.Type != BrokerConfig.DefaultType ? overrides.Type : named.Type,
+        Host       = !string.IsNullOrEmpty(overrides.Host)       ? overrides.Host       : named.Host,
+        Port       = overrides.Port > 0                          ? overrides.Port       : named.Port,
+        Topic      = !string.IsNullOrEmpty(overrides.Topic)      ? overrides.Topic      : named.Topic,
+        Connection = !string.IsNullOrEmpty(overrides.Connection) ? overrides.Connection : named.Connection,
+        User       = !string.IsNullOrEmpty(overrides.User)       ? overrides.User       : named.User,
+        Pass       = !string.IsNullOrEmpty(overrides.Pass)       ? overrides.Pass       : named.Pass,
+        Cert       = !string.IsNullOrEmpty(overrides.Cert)       ? overrides.Cert       : named.Cert,
+        Key        = !string.IsNullOrEmpty(overrides.Key)        ? overrides.Key        : named.Key,
+        Ca         = !string.IsNullOrEmpty(overrides.Ca)         ? overrides.Ca         : named.Ca,
+        Hub        = !string.IsNullOrEmpty(overrides.Hub)        ? overrides.Hub        : named.Hub,
+    };
+
+    private static BrokerConfig CloneBroker(BrokerConfig b) => new()
+    {
+        Type = b.Type,
+        Host = b.Host,
+        Port = b.Port,
+        Topic = b.Topic,
+        Connection = b.Connection,
+        User = b.User,
+        Pass = b.Pass,
+        Cert = b.Cert,
+        Key = b.Key,
+        Ca = b.Ca,
+        Hub = b.Hub,
+    };
 
     public async Task StopAsync(CancellationToken cancellationToken)
     {

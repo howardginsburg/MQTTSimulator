@@ -18,6 +18,33 @@ simulator:
   defaultInterval: 5s
 
   # --------------------------------------------------------------------------
+  # Named Brokers (optional)
+  # --------------------------------------------------------------------------
+  # Define brokers once here and reference them by name in devices/fleets.
+  # This avoids repeating connection strings across many devices.
+  #
+  # In a device:  broker: { name: my-hub }
+  # In a fleet:   brokerRef: my-hub
+  #
+  # Both still accept a full inline broker block — named brokers are optional.
+  # --------------------------------------------------------------------------
+  brokers:
+    my-event-hub:
+      type: EventHub
+      connection: "Endpoint=sb://mynamespace.servicebus.windows.net/;SharedAccessKeyName=send;SharedAccessKey=your-key"
+      hub: my-event-hub
+
+    my-iothub:
+      type: IoTHub
+      host: myhub.azure-devices.net     # shared hub hostname; device id inferred from device.id
+
+    my-event-grid:
+      type: MqttMtls
+      host: myns.westus2-1.ts.eventgrid.azure.net
+      topic: devices/{deviceId}/telemetry   # {deviceId} is replaced with the device id at runtime
+      ca: certs/eventgrid-ca.pem
+
+  # --------------------------------------------------------------------------
   # Telemetry Profiles
   # --------------------------------------------------------------------------
   # Reusable payload schemas referenced by devices. Each field name is a key
@@ -63,6 +90,19 @@ simulator:
   #   broker     Connection settings (see broker examples below)
   # --------------------------------------------------------------------------
   devices:
+
+    # --- Reference a named broker (EventHub — no repeated connection string) ---
+    - id: sensor-001
+      profile: environmental
+      broker:
+        name: my-event-hub              # inherits type/connection/hub from brokers.my-event-hub
+
+    # --- Reference a named IoTHub broker — device id inferred, only SharedAccessKey needed ---
+    - id: sensor-002
+      profile: environmental
+      broker:
+        name: my-iothub
+        key: your-device-shared-access-key   # device-specific SharedAccessKey (Primary/Secondary Key from Azure Portal)
 
     # --- Azure IoT Hub with SAS token (auth inferred from connection) ---
     - id: sensor-001
@@ -125,8 +165,17 @@ simulator:
   # Fleet types:
   #   IoTHub    Creates/reuses devices in IoT Hub via owner key
   #   EventHub  Shares one EventHub connection; device ID = partition key
+  #
+  # Use 'brokerRef' to reference a named broker instead of repeating the
+  # connection string. The broker's type/connection/hub are inherited.
   # --------------------------------------------------------------------------
   fleets:
+    # --- Fleet using a named broker (no repeated connection string) ---
+    - brokerRef: my-event-hub             # inherits type/connection/hub
+      prefix: sensor
+      count: 20
+      profile: environmental
+
     # --- IoT Hub fleet (devices auto-provisioned server-side) ---
     - type: IoTHub
       connection: "HostName=myhub.azure-devices.net;SharedAccessKeyName=iothubowner;SharedAccessKey=your-owner-key"
