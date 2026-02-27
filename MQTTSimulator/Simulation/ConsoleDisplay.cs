@@ -14,8 +14,11 @@ public class ConsoleDisplay
     private int _pageSize;
     private readonly int _configuredPageSize;
 
+    private readonly bool _isInteractive;
+
     public ConsoleDisplay(IOptions<SimulatorConfig> config)
     {
+        _isInteractive = !Console.IsInputRedirected;
         _configuredPageSize = config.Value.PageSize;
         _pageSize = _configuredPageSize > 0 ? _configuredPageSize : ComputeAutoPageSize();
     }
@@ -78,7 +81,7 @@ public class ConsoleDisplay
     {
         // Recompute auto page size now that all devices are registered
         if (_configuredPageSize == 0)
-            _pageSize = ComputeAutoPageSize();
+            _pageSize = _isInteractive ? ComputeAutoPageSize() : _deviceStates.Count;
 
         var live = AnsiConsole.Live(new RenderableAdapter(this));
         await live.StartAsync(async ctx =>
@@ -86,36 +89,40 @@ public class ConsoleDisplay
             _context = ctx;
             ctx.Refresh();
 
-            // Background task: listen for ← → arrow keys to change page
-            var inputTask = Task.Run(() =>
+            // Background task: listen for ← → arrow keys to change page (interactive only)
+            Task? inputTask = null;
+            if (_isInteractive)
             {
-                while (!cancellationToken.IsCancellationRequested)
+                inputTask = Task.Run(() =>
                 {
-                    if (!Console.KeyAvailable)
+                    while (!cancellationToken.IsCancellationRequested)
                     {
-                        Thread.Sleep(50);
-                        continue;
-                    }
-                    var key = Console.ReadKey(intercept: true);
-                    var totalPages = TotalPages();
-                    if (key.Key == ConsoleKey.RightArrow || key.Key == ConsoleKey.DownArrow)
-                    {
-                        if (_currentPage < totalPages - 1)
+                        if (!Console.KeyAvailable)
                         {
-                            _currentPage++;
-                            Refresh();
+                            Thread.Sleep(50);
+                            continue;
+                        }
+                        var key = Console.ReadKey(intercept: true);
+                        var totalPages = TotalPages();
+                        if (key.Key == ConsoleKey.RightArrow || key.Key == ConsoleKey.DownArrow)
+                        {
+                            if (_currentPage < totalPages - 1)
+                            {
+                                _currentPage++;
+                                Refresh();
+                            }
+                        }
+                        else if (key.Key == ConsoleKey.LeftArrow || key.Key == ConsoleKey.UpArrow)
+                        {
+                            if (_currentPage > 0)
+                            {
+                                _currentPage--;
+                                Refresh();
+                            }
                         }
                     }
-                    else if (key.Key == ConsoleKey.LeftArrow || key.Key == ConsoleKey.UpArrow)
-                    {
-                        if (_currentPage > 0)
-                        {
-                            _currentPage--;
-                            Refresh();
-                        }
-                    }
-                }
-            }, cancellationToken);
+                }, cancellationToken);
+            }
 
             try
             {
@@ -128,7 +135,8 @@ public class ConsoleDisplay
             finally
             {
                 _context = null;
-                await inputTask.ConfigureAwait(false);
+                if (inputTask != null)
+                    await inputTask.ConfigureAwait(false);
             }
         });
     }
