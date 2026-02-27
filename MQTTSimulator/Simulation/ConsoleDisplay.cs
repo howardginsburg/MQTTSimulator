@@ -1,4 +1,6 @@
 using System.Collections.Concurrent;
+using Microsoft.Extensions.Options;
+using MQTTSimulator.Configuration;
 using Spectre.Console;
 using Spectre.Console.Rendering;
 
@@ -8,6 +10,22 @@ public class ConsoleDisplay
 {
     private readonly ConcurrentDictionary<string, DeviceState> _deviceStates = new();
     private LiveDisplayContext? _context;
+    private int _currentPage = 0;
+    private int _pageSize;
+    private readonly int _configuredPageSize;
+
+    public ConsoleDisplay(IOptions<SimulatorConfig> config)
+    {
+        _configuredPageSize = config.Value.PageSize;
+        _pageSize = _configuredPageSize > 0 ? _configuredPageSize : ComputeAutoPageSize();
+    }
+
+    private static int ComputeAutoPageSize()
+    {
+        // Reserve rows for: table border (2), title (1), header (1), footer (1), pager line (1), margin (2)
+        var available = Console.WindowHeight - 8;
+        return Math.Max(5, available);
+    }
 
     public void RegisterDevice(string deviceId, string brokerType)
     {
@@ -58,11 +76,46 @@ public class ConsoleDisplay
 
     public async Task RunAsync(CancellationToken cancellationToken)
     {
+        // Recompute auto page size now that all devices are registered
+        if (_configuredPageSize == 0)
+            _pageSize = ComputeAutoPageSize();
+
         var live = AnsiConsole.Live(new RenderableAdapter(this));
         await live.StartAsync(async ctx =>
         {
             _context = ctx;
             ctx.Refresh();
+
+            // Background task: listen for ← → arrow keys to change page
+            var inputTask = Task.Run(() =>
+            {
+                while (!cancellationToken.IsCancellationRequested)
+                {
+                    if (!Console.KeyAvailable)
+                    {
+                        Thread.Sleep(50);
+                        continue;
+                    }
+                    var key = Console.ReadKey(intercept: true);
+                    var totalPages = TotalPages();
+                    if (key.Key == ConsoleKey.RightArrow || key.Key == ConsoleKey.DownArrow)
+                    {
+                        if (_currentPage < totalPages - 1)
+                        {
+                            _currentPage++;
+                            Refresh();
+                        }
+                    }
+                    else if (key.Key == ConsoleKey.LeftArrow || key.Key == ConsoleKey.UpArrow)
+                    {
+                        if (_currentPage > 0)
+                        {
+                            _currentPage--;
+                            Refresh();
+                        }
+                    }
+                }
+            }, cancellationToken);
 
             try
             {
@@ -75,8 +128,15 @@ public class ConsoleDisplay
             finally
             {
                 _context = null;
+                await inputTask.ConfigureAwait(false);
             }
         });
+    }
+
+    private int TotalPages()
+    {
+        var total = _deviceStates.Count;
+        return total == 0 ? 1 : (int)Math.Ceiling(total / (double)_pageSize);
     }
 
     private sealed class RenderableAdapter : IRenderable
@@ -97,9 +157,26 @@ public class ConsoleDisplay
 
         private IRenderable Build()
         {
+            var allDevices = _display._deviceStates.Values.OrderBy(s => s.DeviceId).ToList();
+            var pageSize = _display._pageSize;
+            var totalPages = _display.TotalPages();
+            // Clamp current page in case device count changed
+            var page = Math.Min(_display._currentPage, totalPages - 1);
+            _display._currentPage = page;
+
+            var pageDevices = allDevices.Skip(page * pageSize).Take(pageSize).ToList();
+
+            var pagerText = totalPages > 1
+                ? $"Page {page + 1} of {totalPages}  [dim]\u2190 \u2192 to navigate[/]"
+                : string.Empty;
+
+            var title = totalPages > 1
+                ? $"[bold yellow]MQTT Simulator[/]  {pagerText}"
+                : "[bold yellow]MQTT Simulator[/]";
+
             var table = new Table()
                 .Border(TableBorder.Rounded)
-                .Title("[bold yellow]MQTT Simulator[/]")
+                .Title(title)
                 .Expand()
                 .AddColumn("Device")
                 .AddColumn("Broker")
@@ -108,7 +185,7 @@ public class ConsoleDisplay
                 .AddColumn("Last Send")
                 .AddColumn(new TableColumn("Last Telemetry"));
 
-            foreach (var state in _display._deviceStates.Values.OrderBy(s => s.DeviceId))
+            foreach (var state in pageDevices)
             {
                 var statusMarkup = state.Status switch
                 {

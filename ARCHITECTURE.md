@@ -37,13 +37,13 @@ graph TB
     subgraph Sim["Device Simulation Loop"]
         DS -->|creates| BrokerClientFactory["BrokerClientFactory"]
         DS -->|creates| FieldGeneratorFactory["FieldGeneratorFactory"]
-        DS -->|loop| SendLoop["Connect → Generate → Send → Delay"]
+        DS -->|loop| SendLoop["Connect → Generate → Send → Delay<br/>(fixed or random-range interval)"]
         DS -->|updates| Display["ConsoleDisplay<br/>Spectre.Console live table"]
     end
 
     subgraph Brokers["Broker Clients (IBrokerClient)"]
         BrokerClientFactory --> IoTHubClient["IoTHubBrokerClient<br/>MQTT 3.1.1 via MQTTnet<br/>SAS token / X.509"]
-        BrokerClientFactory --> EventHubClient["EventHubBrokerClient<br/>HTTPS REST API + SAS token<br/>partition key = device ID"]
+        BrokerClientFactory --> EventHubClient["EventHubBrokerClient<br/>Azure.Messaging.EventHubs SDK<br/>EventHubProducerClient<br/>partition key = device ID"]
         BrokerClientFactory --> MqttMtlsClient["MqttMtlsBrokerClient<br/>MQTT + mutual TLS<br/>client cert + CA"]
         BrokerClientFactory --> MqttClient["MqttBrokerClient<br/>MQTT / MQTT+TLS<br/>user/pass or CA cert"]
     end
@@ -61,7 +61,7 @@ graph TB
     subgraph Helpers["Shared Utilities"]
         CertHelper["CertificateHelper<br/>PEM loading, PKCS12 re-export"]
         SasGen["SasTokenGenerator<br/>HMAC-SHA256 SAS tokens"]
-        IntervalParser["IntervalParser<br/>5s / 500ms / 1m → ms"]
+        IntervalParser["IntervalParser<br/>5s / 500ms / 1m → ms<br/>60s-180s → random in range"]
     end
 
     subgraph Targets["External Services"]
@@ -144,7 +144,7 @@ sequenceDiagram
             DS->>G: Generate() for each field
             DS->>DS: Build JSON payload
             DS->>B: SendAsync(payload)
-            DS->>DS: Delay(intervalMs)
+            DS->>DS: Delay(GetNextIntervalMs)<br/>(random if range interval)
         end
     end
 
@@ -170,7 +170,7 @@ MQTTSimulator/
 │   ├── BrokerConfig.cs                 # Broker: name, type, host, connection, certs, ResolvedTopic()
 │   ├── FieldConfig.cs                  # Field: generator type + parameters
 │   ├── ConfigValidator.cs              # Startup validation of entire config
-│   └── IntervalParser.cs               # "5s" / "500ms" / "1m" → milliseconds
+│   └── IntervalParser.cs               # "5s" / "500ms" / "1m" / "60s-180s" → milliseconds (range = random each call)
 │
 ├── Simulation/
 │   ├── SimulationHostedService.cs      # IHostedService — resolves brokers, orchestrates everything
@@ -209,9 +209,10 @@ MQTTSimulator/
 | Decision | Rationale |
 |----------|-----------|
 | **Pure MQTT via MQTTnet** | No dependency on Azure Device SDK — same library for IoT Hub, Event Grid, and generic MQTT brokers |
-| **Event Hubs via HTTPS REST** | Event Hubs doesn't expose an MQTT endpoint; the REST API allows sending events without any SDK dependency |
+| **Event Hubs via SDK** | Uses `Azure.Messaging.EventHubs` (`EventHubProducerClient`) — handles authentication, retry, and batching correctly without reimplementing SAS token generation |
 | **YAML configuration** | More readable than JSON for deeply nested device configs; compact inline syntax for field generators |
 | **Smart defaults** | Auth inferred from fields present, ports default by broker type, intervals inherit from `defaultInterval` — keeps YAML minimal |
+| **Interval ranges** | `interval: 60s-180s` randomizes the inter-message delay within [min, max] — each device independently draws a new random value after every send. Enables realistic CMMS, maintenance, or jitter-heavy telemetry without extra code |
 | **Named brokers** | Shared broker config (host, ca, topic template) defined once; devices override only device-specific fields (cert/key). Avoids repeating connection strings across large device lists and makes bulk broker changes a single edit |
 | **Topic templates** | `{deviceId}` in MQTT topic strings is resolved at runtime via `BrokerConfig.ResolvedTopic(deviceId)`. Enables a single named broker to route each device to its own topic without any per-device topic override |
 | **IoTHub named broker pattern** | When `host` + `key` (no `cert`) is used for IoTHub, the device `id` is the DeviceId and `key` is the SharedAccessKey. Matches the Azure Portal field names and keeps per-device config to a single line |

@@ -7,3 +7,4 @@ devices.yaml
 logs/
 MQTTSimulator/certs/*
 !MQTTSimulator/certs/.gitkeep
+MQTTSimulator/devices.yaml.bak

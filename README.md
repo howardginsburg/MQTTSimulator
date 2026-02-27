@@ -4,6 +4,7 @@ A .NET 8 console application that simulates multiple IoT devices sending configu
 
 ## Features
 
+- **Dynamic interval ranges**: Set `interval: 90s-180s` to randomize the send delay within a range — each message pick a new random value, great for simulating realistic timing jitter
 - **Multiple broker types**: IoT Hub (SAS / X.509), MQTT with mutual TLS, MQTT with username/password, MQTT over TLS, Azure Event Hubs
 - **Pure MQTT**: Uses MQTTnet directly for MQTT brokers — no Azure Device SDK dependencies
 - **Fleet provisioning**: Auto-provision batches of IoT Hub or Event Hub devices from a single connection string
@@ -62,7 +63,7 @@ simulator:
   defaultInterval: 5s       # Default send interval for all devices/fleets
 ```
 
-Interval format: `"5s"` (seconds), `"500ms"` (milliseconds), `"1m"` (minutes).
+Interval format: `"5s"` (seconds), `"500ms"` (milliseconds), `"1m"` (minutes), or a **range** like `"60s-180s"` (random value within [60 s, 180 s] chosen fresh each message).
 
 ### Named Brokers
 
@@ -279,7 +280,7 @@ To keep configuration minimal, several fields are inferred automatically:
 | **Port** | IoTHub/MqttTls/MqttMtls → 8883; Mqtt → 1883 (EventHub uses HTTPS :443) |
 | **IoTHub Device ID** | When using named broker pattern, the device's `id` is used as the IoT Hub Device ID |
 | **Topic resolution** | `{deviceId}` in any MQTT `topic` string is replaced with the device's `id` at runtime |
-| **Interval** | Inherits `defaultInterval` unless device/fleet overrides |
+| **Interval** | Inherits `defaultInterval` unless device/fleet overrides. Accepts a fixed value (`30s`) or a range (`60s-180s`) — range picks a new random delay after every message |
 | **Enabled** | Defaults to `true` |
 
 ## Field Generators

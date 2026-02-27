@@ -37,7 +37,7 @@ public class DeviceSimulator : IAsyncDisposable
                 _logger.LogInformation("Device {DeviceId} sending telemetry: {Payload}", _deviceConfig.Id, payload);
                 await _brokerClient.SendAsync(payload, cancellationToken);
                 _display.RecordTelemetry(_deviceConfig.Id, _messageId, payload);
-                await Task.Delay(_deviceConfig.IntervalMs, cancellationToken);
+                await Task.Delay(_deviceConfig.GetNextIntervalMs(), cancellationToken);
             }
         }
         catch (OperationCanceledException)

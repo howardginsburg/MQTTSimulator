@@ -1,8 +1,8 @@
-using System.Security.Cryptography;
-using System.Text;
-using System.Web;
+using Azure.Messaging.EventHubs;
+using Azure.Messaging.EventHubs.Producer;
 using Microsoft.Extensions.Logging;
 using MQTTSimulator.Configuration;
+using System.Text;
 
 namespace MQTTSimulator.Brokers;
 
@@ -11,11 +11,7 @@ public class EventHubBrokerClient : IBrokerClient
     private readonly string _deviceId;
     private readonly BrokerConfig _brokerConfig;
     private readonly ILogger _logger;
-    private readonly HttpClient _httpClient = new();
-    private string _namespace = string.Empty;
-    private string _hubName = string.Empty;
-    private string _keyName = string.Empty;
-    private string _key = string.Empty;
+    private EventHubProducerClient? _producer;
 
     public EventHubBrokerClient(DeviceConfig deviceConfig, ILogger logger)
     {
@@ -26,31 +22,36 @@ public class EventHubBrokerClient : IBrokerClient
 
     public Task ConnectAsync(CancellationToken cancellationToken = default)
     {
-        ParseConnectionString(_brokerConfig.Connection);
+        var connection = _brokerConfig.Connection;
+        var hub = _brokerConfig.Hub;
 
-        if (!string.IsNullOrEmpty(_brokerConfig.Hub))
-            _hubName = _brokerConfig.Hub;
+        _producer = string.IsNullOrEmpty(hub)
+            ? new EventHubProducerClient(connection)
+            : new EventHubProducerClient(connection, hub);
 
-        _logger.LogInformation("Device {DeviceId} connected to EventHub {HubName} on {Namespace}",
-            _deviceId, _hubName, _namespace);
+        _logger.LogInformation("Device {DeviceId} connected to EventHub {HubName}",
+            _deviceId, _producer.EventHubName);
         return Task.CompletedTask;
     }
 
     public async Task SendAsync(string payload, CancellationToken cancellationToken = default)
     {
-        var uri = $"https://{_namespace}.servicebus.windows.net/{_hubName}/messages";
-        var sasToken = GenerateSasToken($"{_namespace}.servicebus.windows.net/{_hubName}");
+        var eventData = new EventData(Encoding.UTF8.GetBytes(payload));
+        eventData.Properties["deviceId"] = _deviceId;
 
-        using var request = new HttpRequestMessage(HttpMethod.Post, uri);
-        request.Headers.Add("Authorization", sasToken);
-        request.Headers.Add("BrokerProperties", $"{{\"PartitionKey\":\"{_deviceId}\"}}");
-        request.Content = new StringContent(payload, Encoding.UTF8, "application/json");
+        // Use device ID as partition key to keep per-device ordering
+        var options = new SendEventOptions { PartitionKey = _deviceId };
 
-        var response = await _httpClient.SendAsync(request, cancellationToken);
-        response.EnsureSuccessStatusCode();
+        using var batch = await _producer!.CreateBatchAsync(
+            new CreateBatchOptions { PartitionKey = _deviceId }, cancellationToken);
+
+        if (!batch.TryAdd(eventData))
+            throw new InvalidOperationException($"Payload too large for a single Event Hub batch ({payload.Length} bytes)");
+
+        await _producer.SendAsync(batch, cancellationToken);
 
         _logger.LogDebug("Device {DeviceId} sent {Bytes} bytes to EventHub {HubName}",
-            _deviceId, payload.Length, _hubName);
+            _deviceId, payload.Length, _producer.EventHubName);
     }
 
     public Task DisconnectAsync(CancellationToken cancellationToken = default)
@@ -59,46 +60,9 @@ public class EventHubBrokerClient : IBrokerClient
         return Task.CompletedTask;
     }
 
-    public ValueTask DisposeAsync()
+    public async ValueTask DisposeAsync()
     {
-        _httpClient.Dispose();
-        return ValueTask.CompletedTask;
-    }
-
-    private void ParseConnectionString(string connectionString)
-    {
-        foreach (var part in connectionString.Split(';'))
-        {
-            var idx = part.IndexOf('=');
-            if (idx < 0) continue;
-            var key = part[..idx].Trim();
-            var value = part[(idx + 1)..].Trim();
-            switch (key)
-            {
-                case "Endpoint":
-                    _namespace = new Uri(value).Host.Split('.')[0];
-                    break;
-                case "SharedAccessKeyName":
-                    _keyName = value;
-                    break;
-                case "SharedAccessKey":
-                    _key = value;
-                    break;
-                case "EntityPath":
-                    _hubName = value;
-                    break;
-            }
-        }
-    }
-
-    private string GenerateSasToken(string resourceUri)
-    {
-        var encodedUri = HttpUtility.UrlEncode(resourceUri);
-        var expiry = DateTimeOffset.UtcNow.Add(TimeSpan.FromHours(1)).ToUnixTimeSeconds();
-        var stringToSign = $"{encodedUri}\n{expiry}";
-
-        using var hmac = new HMACSHA256(Convert.FromBase64String(_key));
-        var signature = Convert.ToBase64String(hmac.ComputeHash(Encoding.UTF8.GetBytes(stringToSign)));
-        return $"SharedAccessSignature sr={encodedUri}&sig={HttpUtility.UrlEncode(signature)}&se={expiry}&skn={_keyName}";
+        if (_producer is not null)
+            await _producer.DisposeAsync();
     }
 }

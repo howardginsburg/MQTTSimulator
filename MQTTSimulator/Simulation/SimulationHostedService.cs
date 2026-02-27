@@ -112,8 +112,8 @@ public class SimulationHostedService : IHostedService
             _simulators.Add(simulator);
             _runningTasks.Add(simulator.RunAsync(_cts.Token));
 
-            _logger.LogInformation("Started device {DeviceId} with profile '{ProfileName}' (interval: {IntervalMs}ms)",
-                deviceConfig.Id, deviceConfig.Profile, deviceConfig.IntervalMs);
+            _logger.LogInformation("Started device {DeviceId} with profile '{ProfileName}' (interval: {Interval})",
+                deviceConfig.Id, deviceConfig.Profile, deviceConfig.Interval ?? deviceConfig.EffectiveInterval);
         }
 
         _displayTask = _display.RunAsync(_cts.Token);
